@@ -1,0 +1,11 @@
+# 依赖与构建产物
+node_modules/
+*.log
+
+# 系统杂项
+.DS_Store
+Thumbs.db
+
+# 环境实测报告包含内网地址、主机名与凭据位置，不进入公开仓库。
+# 使用者把自建报告放到 assets/skills/dolphinscheduler-python-operator/REFERENCE.md 即可。
+assets/skills/dolphinscheduler-python-operator/REFERENCE.md

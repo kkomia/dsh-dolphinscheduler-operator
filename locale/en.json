@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "DolphinScheduler Operator",
+    "description": "Agent preset for authoring DolphinScheduler Python operators, with a bundled operator skill."
+  }
+}

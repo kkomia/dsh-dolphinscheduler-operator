@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "海豚算子构建",
+    "description": "为 DolphinScheduler Python 算子编写与入参/出参配置提供自带 skill 的构建模式。"
+  }
+}
