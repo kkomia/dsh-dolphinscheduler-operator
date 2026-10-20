@@ -10,7 +10,7 @@
 | 组成 | 说明 |
 |---|---|
 | Agent 模式 `dolphinscheduler` | 显示名「海豚算子构建」。工具集对齐内置 Standard 模式（文件读写/搜索、shell、job、schedule、skill、goal、plan、compaction、subagent、workflow、web、todo、ask_user、present），persona 改为海豚算子专家，并要求动手写算子前先加载 skill。 |
-| Skill `dolphinscheduler-python-operator` | 海豚调度（DolphinScheduler 3.2.2）Python 算子编写规范 + 入参/出参填写指导。由 `lib/index.js` 从包内 `assets/skills/` 直接注册，不依赖 `~/.dsh/skills`。 |
+| Skill `dolphinscheduler-python-operator` | 海豚调度（DolphinScheduler 3.2.2）Python 算子编写规范 + 入参/出参填写指导，含参数嵌套取值（入参填上游出参名字）与注释不豁免替换等实战陷阱；自带交付前占位符渲染自检工具。由 `lib/index.js` 从包内 `assets/skills/` 直接注册，不依赖 `~/.dsh/skills`。 |
 | 环境报告模板 | `assets/skills/dolphinscheduler-python-operator/REFERENCE.example.md`，说明如何为你自己的调度集群补一份 `REFERENCE.md`。 |
 
 ## 安装
@@ -40,7 +40,11 @@
 - 选择「海豚算子构建」模式后，模型在编写/审查算子脚本前会先调用 `skill` 加载
   `dolphinscheduler-python-operator`；也可以直接输入 `/dolphinscheduler-python-operator` 手动触发。
 - skill 覆盖：解释器与装包、执行目录与存储语义、入参/出参写法、`setValue` 语法、
-  交付脚本的字符限制（`>` `<` `&`）、常见错误与排查路径等。
+  交付脚本的字符限制（`>` `<` `&`）、参数嵌套取值（参数值填另一个参数名）、
+  注释不豁免替换等实战陷阱、常见错误与排查路径等。
+- 交付前自检：`assets/skills/dolphinscheduler-python-operator/tools/render_placeholders.py`
+  按 Spring 语义把算子脚本渲染一遍再编译，顺带扫 `>` `<` `&`，能复现「注释里的占位样例
+  被多行值撑断 → SyntaxError」这类肉眼漏掉的问题（`--self-test` 可先自检工具本身）。
 - 环境细节（你的集群的地址、配额、组件版本）由 `REFERENCE.md` 提供，见下节。
 
 ## 关于 `REFERENCE.md`
@@ -68,7 +72,7 @@ assets/skills/dolphinscheduler-python-operator/REFERENCE.md
 ## 有意的设计选择
 
 - **调高 `tool-result-pruner` 阈值**：Standard 默认 `thresholdChars: 8192`，而本 skill 正文约
-  15 K 字符，按标准阈值加载后会被裁到 4 K 头 + 1 K 尾，长会话里模型可能丢失算子规则。
+  18.5 K 字符，按标准阈值加载后会被裁到 4 K 头 + 1 K 尾，长会话里模型可能丢失算子规则。
   这里保留裁剪器但把阈值调到 24576 字符（头 16384 / 尾 2048）。
 - **模式专属**：skill 与 persona 只在「海豚算子构建」模式下生效，不影响 Standard 等其它模式。
 - **无第三方运行时依赖**：`lib/index.js` 只用 Node 内置模块，安装时无需构建。
@@ -84,6 +88,8 @@ dsh-dolphinscheduler-operator/
     SKILL.md            # skill 正文（公开）
     REFERENCE.example.md# 环境报告模板（公开）
     REFERENCE.md        # 你的环境报告（.gitignore，不提交）
+    tools/
+      render_placeholders.py  # 交付前自检：Spring 语义渲染 + 编译 + 禁用字符扫描
   locale/{zh,en}.json   # 插件展示元数据
   icon.svg              # 插件图标
   LICENSE               # MIT

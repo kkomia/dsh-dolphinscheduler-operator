@@ -83,7 +83,7 @@
                 name: '@deepseek-ai/dsh-compaction-basic'
               - id: command-compact
                 name: '@deepseek-ai/dsh-command-compact'
-              # Standard's pruner thresholds would trim this skill's ~15K-character
+              # Standard's pruner thresholds would trim this skill's ~18.5K-character
               # body (threshold 8192), so keep the pruner but raise the bar: only
               # results over 24K characters lose their middle.
               - id: tool-result-pruner

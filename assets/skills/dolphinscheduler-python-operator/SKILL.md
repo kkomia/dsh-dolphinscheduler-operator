@@ -1,6 +1,6 @@
 ---
 name: dolphinscheduler-python-operator
-description: 在海豚调度（DolphinScheduler）的 Python 算子节点上编写脚本、并指导填写算子【入参/出参】设置。当需要生成或审查一段能在该算子环境里正常运行的 Python 脚本时使用；也用于回答"参数怎么填""类型下拉选什么""value 要不要填""出参为什么没值""SQL 的查询结果怎么传给下游""产出文件怎么让人在查看结果里下载""脚本为什么报 ModuleNotFoundError / 路径找不到"这类问题。
+description: 在海豚调度（DolphinScheduler）的 Python 算子节点上编写脚本、并指导填写算子【入参/出参】设置。当需要生成或审查一段能在该算子环境里正常运行的 Python 脚本时使用；也用于回答"参数怎么填""类型下拉选什么""value 要不要填""出参为什么没值""SQL 的查询结果怎么传给下游""产出文件怎么让人在查看结果里下载""脚本为什么报 ModuleNotFoundError / 路径找不到""参数能不能引用另一个参数名（参数嵌套取值）"这类问题。
 ---
 
 # 海豚 Python 算子
@@ -18,6 +18,7 @@ description: 在海豚调度（DolphinScheduler）的 Python 算子节点上编�
 | 跨算子传数据 | 走**出参**；或写 `/dev/`、`/warehouse/`（对象存储） |
 | 入参 | 脚本里写 `${参数名}`，界面里加同名 IN 参数 |
 | 接上游出参 | `RAW = r"""${参数名}"""`，**别用** `"..."` |
+| 参数嵌套 | 入参里填上游出参的**名字**，脚本写 `r"""${${名字}}"""`（⚠️ 源码读法，待实测） |
 | `system.*` | 脚本里 `${system.xxx}` **不会被替换**，别指望 |
 | 执行目录 | `os.getcwd()` 路径里编着 projectCode / 工作流code / 两个实例 id |
 | 出参 | `print("${setValue(key=value)}")`，key 须先在界面声明为 OUT |
@@ -47,6 +48,24 @@ description: 在海豚调度（DolphinScheduler）的 Python 算子节点上编�
 **交付前必须：代码先落盘，再过一遍这四种字符的扫描。**
 本项目已经栽过两次，第二次就是因为「只把代码贴在对话里、没落盘，
 扫描工具根本没跑到」。贴在对话里的每一段可执行代码，都要先在磁盘上存在过。
+
+### 注释不豁免替换（用户实跑反馈）
+
+平台替换的是**整段脚本文本**，注释只是文本的一部分：注释里出现「真实参数名 + 占位形状」的样例，
+**照样会被替换**。值是「多行」时注释会被撑断，报 `SyntaxError: invalid character`。
+规则：**注释里只用文字描述占位形状，不要写占位样例。**
+
+自检里 `startswith("${")` 这类**残缺的 `${`** 会一路扫到下一个配平的 `}`，
+把中间的真占位符一起跳过。所以 **所有参数读取都放在自检块之前，一行都别往下挪**。
+（这条是 Spring 扫描语义的推断，本环境未实测；但遵守成本为零。）
+
+**交付前自检（可选，需本机有 Python）**：在 skill 目录下用
+`tools/render_placeholders.py` 按 Spring 语义把脚本渲染一遍再编译，顺带扫 `> < &`。
+能抓住「注释被多行值撑断」这类肉眼漏掉的问题：
+
+```powershell
+python tools\render_placeholders.py 算子脚本.py --params 参数.json --check
+```
 
 ## 算子脚本模板
 
@@ -162,6 +181,66 @@ if RAW.startswith("${") or not RAW.strip():
 **不要在【入参】里重复声明这个参数。** 参数优先级是
 `启动参数 > 本地参数 > 上游传入 > 全局参数` —— 你在下游声明一个同名本地参数，
 反而会拿本地那个值把上游传过来的盖掉。脚本里直接引用 `${名字}` 就行。
+
+### 参数嵌套：参数值填「上游出参的名字」
+
+有时入参要填的不是值，而是**上游出参的名字**（例如用户提示词来自上游 SQL 的结果列 `sqlresult`）。
+DS 的 `${名字}` 替换器是 Spring `PropertyPlaceholderHelper`，它会把**占位符的名字再解析一遍**，
+所以能用「占位套占位」：里层换成名字，外层再按这个名字取值。
+
+**推荐双通道**：一路接上游名字，一路接字面量。两者互不干扰，失败也能被显式判出来。
+
+```python
+PROMPT_FROM = r"""${${user_prompt_from}}"""     # 名字再解析一遍，拿到上游的值
+PROMPT_FROM_NAME = r"""${user_prompt_from}"""   # 名字本身：区分「没配」和「配了但没解析出来」
+PROMPT_TEXT = r"""${user_prompt}"""             # 字面提示词
+
+FROM_READY = not PROMPT_FROM_NAME.startswith("${")
+PROMPT_SOURCE = ""
+USER_PROMPT = ""
+
+if FROM_READY:
+    if PROMPT_FROM.startswith("${"):
+        print("错误: user_prompt_from 填的是 %s，但嵌套没解析出来。" % PROMPT_FROM_NAME,
+              file=sys.stderr)
+        print("      检查三件事：①上游任务【出参】里确实有这个名字（大小写要一致）",
+              file=sys.stderr)
+        print("      ②本节点【入参】里没有再声明同名参数（会盖掉上游的值）",
+              file=sys.stderr)
+        print("      ③名字填裸名，不要写成带花括号的占位形式", file=sys.stderr)
+        sys.exit(2)
+    if not PROMPT_FROM.strip():
+        print("错误: user_prompt_from 指向 %s，但取到的值是空的" % PROMPT_FROM_NAME,
+              file=sys.stderr)
+        sys.exit(2)
+    USER_PROMPT = PROMPT_FROM
+    PROMPT_SOURCE = "上游参数 " + PROMPT_FROM_NAME
+elif not PROMPT_TEXT.startswith("${") and PROMPT_TEXT.strip():
+    USER_PROMPT = PROMPT_TEXT
+    PROMPT_SOURCE = "字面提示词"
+else:
+    print("错误: 用户提示词没配。给 user_prompt_from 填上游出参的名字，",
+          file=sys.stderr)
+    print("      或者给 user_prompt 直接写字面提示词，二者至少配一个", file=sys.stderr)
+    sys.exit(2)
+```
+
+规则：
+
+- 参数值填**裸名字**（`sqlresult`），不要填 `${sqlresult}` —— 后者走「值再解析」那条路，
+  两种填法不能混用；混写（`${${sqlresult}}`）会拿到上游值再当名字查，查不到。
+- **本节点不要再声明被引用的上游参数**（见上一节）。嵌套写法下更容易踩：参数框里填的正是那个名字，
+  手容易顺带把它加成入参，上游值就被本地空值盖掉。
+- 名字**逐字匹配**：大小写不符、多一个点都查不到。SQL 出参名在 PostgreSQL 里不加引号会被折成小写。
+- **证据等级 ⚠️**：名字递归 / 值递归是 Spring 源码读法，**本环境尚未实测**。
+  先跑一次验证探针：3 条 VARCHAR 入参（`probe_name` = 另一个参数名、`probe_payload` = 任意值、
+  `probe_value` = 占位形态），脚本里分别用占位套占位和直接取值，看哪个等于 `probe_payload` 的值
+  （`REFERENCE.md` 附录 C 有现成的）。`key_ok=True` 才能用双通道；只有值递归成立时退到
+  「值里写占位形态」；两个都不成立就退回「上游落文件、下游读文件」。
+- 只在「永远接上游」时用单通道极简：`USER_PROMPT = r"""${${user_prompt_from}}"""`，
+  代价是字面提示词不能再填。
+- 多行值的两个硬边界：值里不能有**连续三个双引号**，也不能以**单个反斜杠**结尾
+  （`r"""..."""` 会直接 `SyntaxError`）。
 
 ## 出参：脚本侧
 
@@ -478,6 +557,8 @@ cur.execute("select state, var_pool from dolphinscheduler.t_ds_task_instance whe
 11. **没设超时**：平台不设超时，死循环会永久占住执行器。
 12. **写死 `python` 命令**：环境里有多套 Python，用 `sys.executable`。
 13. **往 `/export` 写大数据**：和系统盘同盘，空间小。
+14. **注释里写了可解析的占位样例**：注释不豁免替换，多行值会把注释撑断 → `SyntaxError`。
+15. **参数嵌套的两种填法混用**：键级嵌套要填裸名；填成 `${名字}` 会拿到上游值再当名字查 → 查不到。
 
 ---
 
@@ -530,6 +611,10 @@ cur.execute("select state, var_pool from dolphinscheduler.t_ds_task_instance whe
 | 脚本里 `${system.xxx}` 没被替换 | **正常**，系统参数在脚本里取不到。改用上游出参，或从执行目录路径解析 |
 | Spark 任务报序列化错误 | 没设 `PYSPARK_PYTHON=/usr/bin/python3` |
 | 任务一直不结束 | 平台无超时，自己没给外部调用加 `timeout` |
+| 报「嵌套没解析出来」 | 参数值拼错 / 大小写不符 / 上游没发这个出参 / 本节点又声明了同名入参把它盖空 |
+| 报「取到的值是空的」 | 上游 `setValue` 发的是空值（空值存成 `null`） |
+| 报 `SyntaxError: invalid character`，位置在注释行 | 注释里写了可解析的占位样例，多行值把注释撑断 |
+| 提示词里明明有占位形状却没被替换 | 那个占位符落在某段残缺 `${` 的扫描区间里，被跳过了 |
 
 ## 提需求时的模板
 
