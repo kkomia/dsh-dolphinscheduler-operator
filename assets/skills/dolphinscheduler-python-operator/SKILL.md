@@ -564,7 +564,7 @@ cur.execute("select state, var_pool from dolphinscheduler.t_ds_task_instance whe
 
 # 算子参数怎么填（界面侧）
 
-交付时**只给这张表**，四列：参数名 / 类型 / 必填 / 填什么。
+**参数表**交付时只给这张表，四列：参数名 / 类型 / 必填 / 填什么。
 
 | 参数名 | 类型 | 必填 | 填什么 |
 |---|---|---|---|
@@ -630,4 +630,76 @@ cur.execute("select state, var_pool from dolphinscheduler.t_ds_task_instance whe
   【类型填 VARCHAR，value 留空】
 【上游出参】sqlresult  值留空，本节点不声明
 【失败怎么办】目录不存在时：任务报错退出，还是记 false 继续？
+```
+
+---
+
+# 最后交付给用户的内容
+
+一个算子做完，**最终回复固定交付五样，缺一不可**：
+
+| # | 交付物 | 形态 |
+|---|---|---|
+| 1 | 算子脚本 | Python 代码块，完整可粘贴；`>` `<` `&` 已扫过 |
+| 2 | 入参/出参表 | 四列 Markdown 表；本节点一张，上游有出参就再加一张 |
+| 3 | 推荐仓库名 | 一行文本 |
+| 4 | 仓库描述 | 一段话，可直接粘进 Git 仓库的 description 栏 |
+| 5 | 本次提交的 comment | conventional commit，可直接拿去 `git commit` |
+
+仓库名、仓库描述、提交注释是**交给用户的信息**：除非用户明确要求，不要代为创建远程仓库或 push。
+
+## 推荐仓库名
+
+统一 **`dolphinscheduler-` 前缀 + 算子英文短名**：全小写、单词间用 `-`。例如：
+
+| 算子 | 推荐仓库名 |
+|---|---|
+| 大模型调用 | `dolphinscheduler-llm-operator` |
+| SQL 结果导出 xlsx | `dolphinscheduler-sql-to-xlsx-operator` |
+| 文件上传 | `dolphinscheduler-file-upload-operator` |
+
+- 前缀写全 `dolphinscheduler`，不要缩成 `ds-`（`ds-llm-operator` 这类名字不成体系，也看不出归属）
+- 短名用英文讲"做什么"，不带日期、版本号、项目代号
+- 一组配套算子（业务 + 上传）放同一个仓库时，用主算子的名字
+
+## 仓库描述
+
+一段话，可直接粘进仓库的 description 栏：**开头点明目标环境，中间讲入参到出参，结尾讲依赖与失败**：
+
+```
+海豚调度（DolphinScheduler 3.2.2）PYTHON 算子：<一句话做什么>。入参 <关键参数>，
+出参 <关键出参>；<依赖：纯标准库，或钉死版本的 pip 包>，<失败语义：参数没配、
+上游值为空、接口报错均 exit 2>。
+```
+
+- 公开仓库**不写**内网地址、主机名、数据库名、密钥；示例用 `<网关地址>` 这类占位
+- 可选补一行标签：`dolphinscheduler` `python-operator` `<领域词>`
+- 描述里出现的参数名、出参名必须与脚本、参数表逐字一致
+
+## 本次提交的 comment
+
+用 conventional commits，中文 subject + 三行要点正文：
+
+```
+feat: 新增<算子中文名>算子，<最关键的一个能力>
+
+- 入参：<参数1> / <参数2> / ...（全部 VARCHAR）
+- 出参：<出参1> / <出参2>（VARCHAR，value 留空）
+- 失败：参数没配、上游值为空、接口报错均 exit 2，stderr 打原因
+```
+
+- 新算子用 `feat:`，修 bug 用 `fix:`，只动文档用 `docs:`
+- subject 一句话说完"新增了什么算子、最关键的能力"，不要写"更新一下"这类空话
+- 正文必带**入参 / 出参 / 失败语义**三块，以后 `git log` 就能看懂接口
+- 一次提交一个算子；业务算子、上传算子分开提交时，各写各的 comment
+
+## 最终回复的结构
+
+```
+【算子】<中文名>（<一句话能力>）
+【脚本】<完整 Python 代码块>
+【参数表】<四列：参数名 / 类型 / 必填 / 填什么>
+【仓库名】dolphinscheduler-<短名>
+【仓库描述】<一段话>
+【提交注释】<conventional commit>
 ```
