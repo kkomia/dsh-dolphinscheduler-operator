@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-dolphinscheduler-operator",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "description": "DolphinScheduler Python operator skill and the \u201c海豚算子构建\u201d agent preset for DeepSeek Harness",
   "type": "module",
@@ -12,7 +12,11 @@
     "./icon": "./icon.svg"
   },
   "icon": "icon.svg",
+  "engines": {
+    "dsh": "^0.2.2-rc.1"
+  },
   "dsh": {
+    "manifestVersion": 1,
     "bundle": {
       "patch": "./cordis.patch.yml"
     }

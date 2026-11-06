@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "DolphinScheduler Operator",
-    "description": "Agent preset for authoring DolphinScheduler Python operators, with a bundled operator skill."
+    "description": "Agent preset for authoring DolphinScheduler Python operators, filling IN/OUT parameters, and fetching data from platform data views, with a bundled operator skill."
   }
 }

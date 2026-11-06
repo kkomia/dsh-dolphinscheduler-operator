@@ -9,13 +9,14 @@
 
 | 组成 | 说明 |
 |---|---|
-| Agent 模式 `dolphinscheduler` | 显示名「海豚算子构建」。工具集对齐内置 Standard 模式（文件读写/搜索、shell、job、schedule、skill、goal、plan、compaction、subagent、workflow、web、todo、ask_user、present），persona 改为海豚算子专家，并要求动手写算子前先加载 skill。 |
-| Skill `dolphinscheduler-python-operator` | 海豚调度（DolphinScheduler 3.2.2）Python 算子编写规范 + 入参/出参填写指导，含参数嵌套取值（入参填上游出参名字）与注释不豁免替换等实战陷阱；自带交付前占位符渲染自检工具；末尾规定最终交付清单（脚本 / 参数表 / 推荐仓库名 / 仓库描述 / 提交注释）。由 `lib/index.js` 从包内 `assets/skills/` 直接注册，不依赖 `~/.dsh/skills`。 |
+| Agent 模式 `dolphinscheduler` | 显示名「海豚算子构建」。工具集对齐 **dsh 0.2.2-rc.1 内置 Standard 模式**（文件读写/搜索、shell、job、schedule、skill、goal、plan、compaction、subagent、workflow、web、todo、ask_user、present），persona 改为海豚算子专家，并要求动手写算子前先加载 skill。 |
+| Skill `dolphinscheduler-python-operator` | 海豚调度（DolphinScheduler 3.2.2）Python 算子编写规范 + 入参/出参填写指导，含参数嵌套取值（入参填上游出参名字）与注释不豁免替换等实战陷阱；**从平台「数据视图」HTTP 接口取数**（接口契约、翻页与 `rows` 清洗、视图参数三处配置、空值报错排查）与算子侧断言/默认时间窗口；自带交付前占位符渲染自检工具；末尾规定最终交付清单（脚本 / 参数表 / 推荐仓库名 / 仓库描述 / 提交注释，依赖数据视图时加视图注册清单）。由 `lib/index.js` 从包内 `assets/skills/` 直接注册，不依赖 `~/.dsh/skills`。 |
 | 环境报告模板 | `assets/skills/dolphinscheduler-python-operator/REFERENCE.example.md`，说明如何为你自己的调度集群补一份 `REFERENCE.md`。 |
 
 ## 安装
 
-前置：DeepSeek Harness（在 `0.2.1-rc.2` desktop profile 上验证）。
+前置：DeepSeek Harness `0.2.2-rc.1`（desktop profile 上验证）。`package.json` 里声明了
+`engines.dsh: ^0.2.2-rc.1`，内核不匹配时 bundle 会被启动器跳过（不会报错，模式会静默消失）。
 
 1. 克隆本仓库：
 
@@ -41,10 +42,13 @@
   `dolphinscheduler-python-operator`；也可以直接输入 `/dolphinscheduler-python-operator` 手动触发。
 - skill 覆盖：解释器与装包、执行目录与存储语义、入参/出参写法、`setValue` 语法、
   交付脚本的字符限制（`>` `<` `&`）、参数嵌套取值（参数值填另一个参数名）、
-  注释不豁免替换等实战陷阱、常见错误与排查路径等。
+  注释不豁免替换等实战陷阱、常见错误与排查路径，以及**从平台数据视图取数**：
+  接口契约、翻页与 `rows` 清洗、视图参数（`@where` / 查询参数 / where 配置）、
+  空值报错排查、算子侧默认时间窗口与列数/行数断言。
 - 最终交付：一次算子交付的回复固定包含 ① 算子脚本 ② 入参/出参表
   ③ 推荐仓库名（统一 `dolphinscheduler-` 前缀，如 `dolphinscheduler-llm-operator`）
-  ④ 仓库描述 ⑤ 本次提交的 comment（conventional commit）。
+  ④ 仓库描述 ⑤ 本次提交的 comment（conventional commit）；算子依赖平台数据视图时
+  再加第 ⑥ 样**视图注册清单**（视图名 / SQL 主文件 / 参数 / 返回行数×列数 / viewId）。
 - 交付前自检：`assets/skills/dolphinscheduler-python-operator/tools/render_placeholders.py`
   按 Spring 语义把算子脚本渲染一遍再编译，顺带扫 `>` `<` `&`，能复现「注释里的占位样例
   被多行值撑断 → SyntaxError」这类肉眼漏掉的问题（`--self-test` 可先自检工具本身）。
@@ -75,10 +79,25 @@ assets/skills/dolphinscheduler-python-operator/REFERENCE.md
 ## 有意的设计选择
 
 - **调高 `tool-result-pruner` 阈值**：Standard 默认 `thresholdChars: 8192`，而本 skill 正文约
-  20.2 K 字符，按标准阈值加载后会被裁到 4 K 头 + 1 K 尾，长会话里模型可能丢失算子规则。
-  这里保留裁剪器但把阈值调到 24576 字符（头 16384 / 尾 2048）。
+  2.97 万字符，按标准阈值加载后会被裁到 4 K 头 + 1 K 尾，长会话里模型可能丢失算子规则。
+  这里保留裁剪器但把阈值调到 32768 字符（头 28672 / 尾 3072，内核要求
+  `headChars + 标记 + tailChars <= thresholdChars`，标记 39 字符 → 31783 通过）。
+- **与 Standard 的刻意差异**：`cordis.patch.yml` 的 preset 逐行对齐
+  `@deepseek-ai/dsh-web-app/presets/standard.patch.yml`，只保留四处差异——persona 文案、
+  `tool-result-pruner` 预算、多一行本包自带的 skill provider、preset 的 id/name/description/order。
+  这样内核升级带来的工具增删只需跟 Standard 同步。
 - **模式专属**：skill 与 persona 只在「海豚算子构建」模式下生效，不影响 Standard 等其它模式。
 - **无第三方运行时依赖**：`lib/index.js` 只用 Node 内置模块，安装时无需构建。
+
+## 内核版本适配
+
+| 内核 | 本插件版本 | 适配内容 |
+|---|---|---|
+| `0.2.1-rc.2` | `1.2.0` | 首版：自带 skill provider + 海豚算子构建模式。 |
+| `0.2.2-rc.1` | `1.3.0` | preset 对齐 Standard：`tool-subagent` 改用 `modelSelection` / `modelDiscovery`（旧键 `modelSelectionSettings` 被静默忽略）、`tool-fs` 关掉 `apply_patch`、`tool-plugin-manager` 按 `profileContext` 条件启用、删除内核已合并掉的 `tool-subagent-control/list-agents` 行；`package.json` 增加 `dsh.manifestVersion: 1` 与 `engines.dsh`；skill 补「从平台数据视图取数」。 |
+
+升级内核后建议的验证顺序：`dsh --profile <临时 profile> --dump-config` 能组合出 preset →
+在 App 的模式列表里出现「海豚算子构建」→ 新建该模式会话能正常加载 skill。
 
 ## 目录结构
 

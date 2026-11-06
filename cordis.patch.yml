@@ -1,8 +1,10 @@
 # dsh.dolphinscheduler-operator bundle patch
 #
-# Adds the “海豚算子构建” agent preset (id: dolphinscheduler). The preset keeps the
-# full Standard tool set and adds a bundled `dolphinscheduler-python-operator`
-# skill served by this package's own lib/index.js provider.
+# Targets DeepSeek Harness 0.2.2-rc.1 and mirrors the built-in Standard preset
+# (`@deepseek-ai/dsh-web-app/presets/standard.patch.yml`) for the tool set. The
+# deliberate deltas from Standard are the persona text, the tool-result-pruner
+# budgets, and one extra bundled skill provider row (this package's lib/index.js
+# serves the `dolphinscheduler-python-operator` skill).
 - insert:
     - id: preset-dolphinscheduler
       name: '@deepseek-ai/dsh-agent-preset'
@@ -33,6 +35,8 @@
             disabled: !!js process.platform !== 'win32'
           - id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'
+            config:
+              applyPatch: false
           - id: tool-fs-search
             name: '@deepseek-ai/dsh-tool-fs-search'
             config:
@@ -83,15 +87,17 @@
                 name: '@deepseek-ai/dsh-compaction-basic'
               - id: command-compact
                 name: '@deepseek-ai/dsh-command-compact'
-              # Standard's pruner thresholds would trim this skill's ~20.2K-character
+              # Standard's pruner thresholds would trim this skill's ~30K-character
               # body (threshold 8192), so keep the pruner but raise the bar: only
-              # results over 24K characters lose their middle.
+              # results over 32K characters lose their middle. The kernel requires
+              # headChars + marker + tailChars <= thresholdChars: the marker is 39
+              # characters, so 28672 + 39 + 3072 = 31783 <= 32768.
               - id: tool-result-pruner
                 name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
                 config:
-                  thresholdChars: 24576
-                  headChars: 16384
-                  tailChars: 2048
+                  thresholdChars: 32768
+                  headChars: 28672
+                  tailChars: 3072
           - id: delegation
             name: cordis:group
             group: true
@@ -100,14 +106,13 @@
             config:
               - id: tool-subagent-control
                 name: '@deepseek-ai/dsh-tool-subagent-control'
-              - id: tool-subagent-list-agents
-                name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
               - id: tool-subagent
                 name: '@deepseek-ai/dsh-tool-subagent'
                 config:
                   provider: spawn
                   toolName: subagent
-                  modelSelectionSettings: true
+                  modelSelection: true
+                  modelDiscovery: true
               - id: tool-subagent-fork
                 name: '@deepseek-ai/dsh-tool-subagent'
                 config:
@@ -134,7 +139,7 @@
             name: '@deepseek-ai/dsh-tool-present'
           - id: tool-plugin-manager
             name: '@deepseek-ai/dsh-plugin-manager/tools'
-            disabled: true
+            disabled: !!js "!ctx.get('profileContext')"
           - id: tool-plugin-market
             name: '@deepseek-ai/dsh-plugin-market/tools'
             disabled: true
