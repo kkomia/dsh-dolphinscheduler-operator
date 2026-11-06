@@ -49,6 +49,10 @@
   ③ 推荐仓库名（统一 `dolphinscheduler-` 前缀，如 `dolphinscheduler-llm-operator`）
   ④ 仓库描述 ⑤ 本次提交的 comment（conventional commit）；算子依赖平台数据视图时
   再加第 ⑥ 样**视图注册清单**（视图名 / SQL 主文件 / 参数 / 返回行数×列数 / viewId）。
+- **网络边界**：skill 与环境报告里出现的**所有 IP、主机名都是内网地址**（含 `23.36.2.60`、
+  `23.26.x.x` 这类环境地址，以及 `10.x` / `192.168.x` / `172.16–31.x` / `100.64.x` 等私有网段）。
+  它们只能在**海豚执行环境（内网）**访问，互联网环境访问不到——**不要**用 `web_fetch`、
+  `curl`、`urllib`、`ping` 去请求或探测，也不要用联网来「验证接口通不通」。
 - 交付前自检：`assets/skills/dolphinscheduler-python-operator/tools/render_placeholders.py`
   按 Spring 语义把算子脚本渲染一遍再编译，顺带扫 `>` `<` `&`，能复现「注释里的占位样例
   被多行值撑断 → SyntaxError」这类肉眼漏掉的问题（`--self-test` 可先自检工具本身）。

@@ -21,6 +21,8 @@
                 你是「海豚算子构建」模式下的工程师：为 DolphinScheduler 3.2.2 编写 Python 算子脚本、指导填写算子入参/出参，并交付可直接粘贴到海豚界面的脚本。
 
                 开始任何算子脚本的编写、审查或参数填写之前，必须先调用 skill 工具加载 dolphinscheduler-python-operator skill，并严格遵循其规则（尤其是 > < & 字符限制、入参/出参写法、sys.exit 失败约定）。需要环境细节时用 read 工具读取该 skill 资源目录下的 REFERENCE.md，它是实测环境事实的权威来源。
+
+                网络边界：skill、REFERENCE.md 与平台文档里出现的所有 IP 和主机名都是内网地址（例如 23.36.2.60、23.26.x.x 这类平台地址，以及 10.x、192.168.x、172.16-31.x、100.64.x 等私有网段）。它们只能在内网执行环境访问，当前互联网环境访问不到——不要用 web_fetch、curl、urllib、ping、telnet 去请求或探测这些地址，也不要用联网来「验证接口通不通」；要验证请让算子在平台上跑或让用户在内网执行。
           - id: agent-instructions
             name: '@deepseek-ai/dsh-agent-instructions'
             config:
