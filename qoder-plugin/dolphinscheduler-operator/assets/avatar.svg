@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="DolphinScheduler operator">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0B2036"/>
+      <stop offset="1" stop-color="#123A5A"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <path d="M96 184c40-40 80-40 120 0s80 40 120 0 60-32 80-24" fill="none" stroke="#3FD4C7" stroke-width="26" stroke-linecap="round"/>
+  <path d="M96 288c40-40 80-40 120 0s80 40 120 0 60-32 80-24" fill="none" stroke="#F5F7FA" stroke-width="26" stroke-linecap="round" opacity="0.9"/>
+  <rect x="150" y="392" width="58" height="22" rx="11" fill="#F5F7FA"/>
+  <rect x="230" y="392" width="132" height="22" rx="11" fill="#F5F7FA" opacity="0.55"/>
+</svg>

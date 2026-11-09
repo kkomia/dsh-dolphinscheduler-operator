@@ -1,0 +1,542 @@
+# 海豚 Python 算子：脚本侧规范
+
+写或审查一段要粘进海豚 Python 算子的脚本时，以本文件为准。
+
+## 符号写法对照（交付脚本必须遵守）
+
+脚本是靠**复制粘贴**进海豚的。实测：`>` 会在粘贴链路里变成 `&gt;`，
+里面的 `;` 直接把语句截断 —— `if len(x) &gt; 1:` 报 `SyntaxError: invalid syntax`。
+所以交付的脚本里**不要出现 `>` `<` `&`**：
+
+| 想写 | 写成 |
+|---|---|
+| `a > b` | `a != b`（只判不等时）／`max(a, b) == a` |
+| `a >= 32` | `a not in range(32)` |
+| `a < b` | `min(a, b) == a` |
+| `a <= n` | `a in range(n + 1)` |
+| 注释里的 `->` | 用文字，例如「转成」 |
+
+`<` 也**实测**会被转成 `&lt;` —— `if len(parts) &lt; 4:` 报同样的 `SyntaxError`。
+`&` 没单独实测，按同样风险处理。
+
+**交付前必须：代码先落盘，再过一遍这四种字符的扫描。**
+本项目已经栽过两次，第二次就是因为「只把代码贴在对话里、没落盘，
+扫描工具根本没跑到」。贴在对话里的每一段可执行代码，都要先在磁盘上存在过。
+
+### 注释不豁免替换（用户实跑反馈）
+
+平台替换的是**整段脚本文本**，注释只是文本的一部分：注释里出现「真实参数名 + 占位形状」的样例，
+**照样会被替换**。值是「多行」时注释会被撑断，报 `SyntaxError: invalid character`。
+规则：**注释里只用文字描述占位形状，不要写占位样例。**
+
+自检里 `startswith("${")` 这类**残缺的 `${`** 会一路扫到下一个配平的 `}`，
+把中间的真占位符一起跳过。所以 **所有参数读取都放在自检块之前，一行都别往下挪**。
+（这条是 Spring 扫描语义的推断，本环境未实测；但遵守成本为零。）
+
+**交付前自检（可选，需本机有 Python）**：在本 skill 目录下用
+`scripts/render_placeholders.py` 按 Spring 语义把脚本渲染一遍再编译，顺带扫 `> < &`。
+能抓住「注释被多行值撑断」这类肉眼漏掉的问题：
+
+```powershell
+python scripts/render_placeholders.py 算子脚本.py --params 参数.json --check
+```
+
+## 算子脚本模板
+
+```python
+# -*- coding: utf-8 -*-
+import subprocess
+import sys
+
+
+# ---------- 1. 读入参 ----------
+# 参数值是平台替换进来的，读到的就是字符串
+TARGET = "${target_dir}".strip()
+PATTERN = "${pattern}".strip()
+RAW_REC = "${recursive}".strip()
+
+# 必填项：未配置则退出（未配置时读到的是字面量 "${target_dir}"）
+if TARGET.startswith("${"):
+    print("错误: 入参 target_dir 未配置", file=sys.stderr)
+    sys.exit(2)
+
+# 可选项：未配置时用默认值（不查的话会被当成 False）
+RECURSIVE = RAW_REC in ("1", "true", "True") if not RAW_REC.startswith("${") else False
+
+
+# ---------- 2. 业务逻辑 ----------
+def run(cmd, timeout=120):
+    """所有外部调用都要加 timeout —— 平台不设超时。"""
+    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       timeout=timeout)
+    return p.returncode, p.stdout.decode("utf-8", "replace")
+
+
+rc, out = run(["ls", "-la", TARGET])
+ok = (rc == 0)
+print(out[-500:])                                # 便于人在日志里看
+
+
+# ---------- 3. 发出参 ----------
+print("${setValue(checkResult=%s)}" % ("true" if ok else "false"))
+
+
+# ---------- 4. 退出码表达成败 ----------
+sys.exit(0 if ok else 2)
+```
+
+## 入参：脚本侧
+
+占位符写成 `${参数名}`，平台执行前替换成实际值。
+
+### 参数从哪来：替换是"查表"，不是"找声明"
+
+平台派发任务时会拼一张 `prepareParamsMap`，脚本里的 `${名字}` 就是拿它查表替换的。
+**"声明入参" = 往这张表里加一条，不是"申请权限"。** 表里本来就有的，不写也能取到。
+
+| 来源 | 要不要在本节点写 |
+|---|---|
+| **上游任务的 OUT 参数** | **千万别写** |
+| 本节点的本地参数（IN） | 要写 |
+| 全局参数 / 工作流级参数 | **要写**，且本地参数的值填成全局参数的 key |
+| `system.*`（项目/工作流/任务 ID、业务日期） | **写了也取不到**，见下 |
+
+**上游出参为什么千万别写**：优先级是
+`启动参数 本地参数 上游传入 全局参数` —— 本地参数更高。
+在下游再声明一个同名的空参数，就把上游传下来的值**盖成空**了。
+（实测：某任务的 `localParams` 里没有 `org_code`，脚本里 `${org_code}` 照样被替换。）
+
+**`system.*` 是个陷阱**：它们在 `prepareParamsMap` 里**有键有值**，
+但脚本里 `${system.project.code}` **不会被替换**（实测两次）。`参数1` 这类
+全局参数同样不替换。**要什么值，就让上游用出参传下来，或者自己声明一个带值的入参。**
+
+> 过滤发生在哪一层**尚未定位**——`PropertyPlaceholderHelper` 通读过，
+> 对占位符名字没有任何字符限制。按实测用就行，别去推导。
+>
+> 例外：**平台用「启动参数」启动工作流时**，`${projectCode}` 这类短名是能拿到的。
+> 手工从 UI 点运行就没有。兜底办法见「那 5 个 ID 从哪来」。
+
+**必做**：每个入参都做未替换自检。未配置的参数会**原样留成字面量** `"${target_dir}"`，不会报错，只会静默出错。
+
+```python
+TARGET = "${target_dir}".strip()
+if TARGET.startswith("${") or not TARGET:
+    sys.exit(2)
+```
+
+**可选参数也要查**，否则"没配"会被当成默认值：
+
+```python
+RAW = "${recursive}".strip()
+if RAW.startswith("${"):
+    RECURSIVE = False          # 未配置
+else:
+    RECURSIVE = RAW in ("1", "true", "True")
+```
+
+**转换放代码里**：`int("${count}")`、`float("${rate}")`。
+
+## 接上游出参（值来自上一个算子）
+
+上游的 OUT 参数会像普通入参一样替换进脚本正文，**不需要在本节点再声明一遍**。
+但它往往是 JSON，里面有双引号和反斜杠，用 `"${x}"` 会直接把脚本写坏。**一律用 `r"""`**：
+
+```python
+RAW = r"""${sqlresult}"""
+if RAW.startswith("${") or not RAW.strip():
+    print("错误: 上游出参 sqlresult 没传过来", file=sys.stderr)
+    sys.exit(2)
+```
+
+- **三引号**：值里的 `"` 和换行都不会截断字符串
+- **`r`**：保住 `\"` 里的反斜杠，否则 `json.loads` 会失败
+- 自检仍然必须做（写法同普通入参）
+
+**不要在【入参】里重复声明这个参数。** 参数优先级是
+`启动参数 > 本地参数 > 上游传入 > 全局参数` —— 你在下游声明一个同名本地参数，
+反而会拿本地那个值把上游传过来的盖掉。脚本里直接引用 `${名字}` 就行。
+
+### 参数嵌套：参数值填「上游出参的名字」
+
+有时入参要填的不是值，而是**上游出参的名字**（例如用户提示词来自上游 SQL 的结果列 `sqlresult`）。
+DS 的 `${名字}` 替换器是 Spring `PropertyPlaceholderHelper`，它会把**占位符的名字再解析一遍**，
+所以能用「占位套占位」：里层换成名字，外层再按这个名字取值。
+
+**推荐双通道**：一路接上游名字，一路接字面量。两者互不干扰，失败也能被显式判出来。
+
+```python
+PROMPT_FROM = r"""${${user_prompt_from}}"""     # 名字再解析一遍，拿到上游的值
+PROMPT_FROM_NAME = r"""${user_prompt_from}"""   # 名字本身：区分「没配」和「配了但没解析出来」
+PROMPT_TEXT = r"""${user_prompt}"""             # 字面提示词
+
+FROM_READY = not PROMPT_FROM_NAME.startswith("${")
+PROMPT_SOURCE = ""
+USER_PROMPT = ""
+
+if FROM_READY:
+    if PROMPT_FROM.startswith("${"):
+        print("错误: user_prompt_from 填的是 %s，但嵌套没解析出来。" % PROMPT_FROM_NAME,
+              file=sys.stderr)
+        print("      检查三件事：①上游任务【出参】里确实有这个名字（大小写要一致）",
+              file=sys.stderr)
+        print("      ②本节点【入参】里没有再声明同名参数（会盖掉上游的值）",
+              file=sys.stderr)
+        print("      ③名字填裸名，不要写成带花括号的占位形式", file=sys.stderr)
+        sys.exit(2)
+    if not PROMPT_FROM.strip():
+        print("错误: user_prompt_from 指向 %s，但取到的值是空的" % PROMPT_FROM_NAME,
+              file=sys.stderr)
+        sys.exit(2)
+    USER_PROMPT = PROMPT_FROM
+    PROMPT_SOURCE = "上游参数 " + PROMPT_FROM_NAME
+elif not PROMPT_TEXT.startswith("${") and PROMPT_TEXT.strip():
+    USER_PROMPT = PROMPT_TEXT
+    PROMPT_SOURCE = "字面提示词"
+else:
+    print("错误: 用户提示词没配。给 user_prompt_from 填上游出参的名字，",
+          file=sys.stderr)
+    print("      或者给 user_prompt 直接写字面提示词，二者至少配一个", file=sys.stderr)
+    sys.exit(2)
+```
+
+规则：
+
+- 参数值填**裸名字**（`sqlresult`），不要填 `${sqlresult}` —— 后者走「值再解析」那条路，
+  两种填法不能混用；混写（`${${sqlresult}}`）会拿到上游值再当名字查，查不到。
+- **本节点不要再声明被引用的上游参数**（见上一节）。嵌套写法下更容易踩：参数框里填的正是那个名字，
+  手容易顺带把它加成入参，上游值就被本地空值盖掉。
+- 名字**逐字匹配**：大小写不符、多一个点都查不到。SQL 出参名在 PostgreSQL 里不加引号会被折成小写。
+- **证据等级 ⚠️**：名字递归 / 值递归是 Spring 源码读法，**本环境尚未实测**。
+  先跑一次验证探针：3 条 VARCHAR 入参（`probe_name` = 另一个参数名、`probe_payload` = 任意值、
+  `probe_value` = 占位形态），脚本里分别用占位套占位和直接取值，看哪个等于 `probe_payload` 的值
+  （探针按 `references/environment.example.md` 的建议自建）。`key_ok=True` 才能用双通道；只有值递归成立时退到
+  「值里写占位形态」；两个都不成立就退回「上游落文件、下游读文件」。
+- 只在「永远接上游」时用单通道极简：`USER_PROMPT = r"""${${user_prompt_from}}"""`，
+  代价是字面提示词不能再填。
+- 多行值的两个硬边界：值里不能有**连续三个双引号**，也不能以**单个反斜杠**结尾
+  （`r"""..."""` 会直接 `SyntaxError`）。
+
+## 出参：脚本侧
+
+```python
+print("${setValue(key=value)}")
+```
+
+规则：
+
+- 一个 `setValue` 只放一个 `key=value`；要多个就分行发多次
+- `key` 必须是**已声明的出参名**，否则值被丢弃
+- 值里可以含空格、中文、引号、逗号、等号、斜杠（按第一个 `=` 切分）
+- 值里含**换行**时要发 `repr(value)`，否则传不过去
+- 同名 key 重复发是**覆盖**，不是追加
+- 任务失败时不落库
+
+### 脚本 exit 0 **不等于**任务成功
+
+DS 在脚本跑完之后还有一段"收尾"（`WorkerTaskExecutor.afterExecute`）：发告警 →
+组装结果 → **遍历出参上传文件** → 清执行目录。**这段里抛异常，任务一样判 FAILURE**，
+哪怕脚本是 exit 0、日志里所有输出都正常。
+
+判断成败要看这一行：
+
+```
+Send task execute status: SUCCESS to master : ...
+```
+
+没有这行、或者出现 `Task execute failed, due to meet an exception`，就是收尾挂了。
+
+实测踩到过：自定义算子注册出来的参数带 `"type":""`（空串），
+枚举字段反序列化成 `null`，收尾里的
+`property.getType().equals(DataType.FILE)` 直接 NPE
+（`TaskFilesTransferUtils.getFileLocalParams`）。**规避：出参一个都别声明**，
+空 `localParams` 会让那段直接 return，而 `setValue` 本来就会静默丢弃未声明的 key。
+
+## SQL 算子：查询结果怎么给下游
+
+**SQL 出参不是整个结果集，而是结果里的某一列。** 规则：
+
+| 结果行数 | 出参类型 | 拿到的值 |
+|---|---|---|
+| 多行 | `LIST` | 该列所有值组成的 **JSON 数组字符串** |
+| 多行 | 非 `LIST` | **拿不到**（不赋值） |
+| 1 行 | 任意 | 该列的值（裸值，不是数组） |
+
+**出参名必须和结果的列名（或别名）逐字一致。** 名字对不上**不报错**，
+值会变成字符串 `"null"` —— 这是最常见的坑。
+
+**不是"出参清单要跟 select 的列清单对齐"，是"一个出参去找一个同名列"**：
+
+- 结果里没被出参点名的列 → **直接忽略**
+- 出参点名了但结果里没这列 → 该出参**静默变成 `"null"`**
+- 想要几列就声明几个出参（各自一个 JSON 数组），但下游得自己拼回去，**别这么干**
+
+列名**区分大小写**。PostgreSQL 里不加引号的别名会被折成小写，
+`as sqlresult` 配小写出参名；写成 `as "sqlResult"` 就对不上了。
+
+多行 + `LIST` 时，列里的 **NULL 会变成字符串 `"null"`**（源码读法，未实测）——
+NULL 和真的 `"null"` 分不开。这又是一个该走整行 JSON 的理由。
+
+要整行导出，就把整行塞进一个列、并让它和出参同名：
+
+```sql
+select to_json(t)::text as sqlresult from 库.表 t
+```
+
+- 用 `to_json`，**别用 `to_jsonb`** —— jsonb 会按 key 长度重排列顺序
+- 下游要同时认两种形状：多行是 JSON 数组，单行是裸对象
+- 查询结果**最多 10000 行**（查询上限填 0 时的默认值），**静默截断**
+
+## 导出文件的标准做法（**已跑通**）
+
+要让人能在【查看结果】里下载产出文件，**拆成两个算子**：
+
+```
+SQL/业务算子  →  算子A（业务）              →  算子B（通用上传）
+                 产出文件到 /data/outbox/      读路径 → 传平台文件服务 → 登记
+                 出参 xlsxPath = 绝对路径
+```
+
+**为什么这么分**：取 token / 拼 multipart / 登记这段最容易写错，
+收进算子 B 之后业务算子只管产出文件，换文件类型（csv / zip）也不用改 B。
+
+**为什么不用海豚自带的 `FILE` 参数**：
+
+| | 传到哪 | 【查看结果】读吗 |
+|---|---|---|
+| 海豚 `FILE` 出参 | DS 资源中心 `DATA_TRANSFER/日期/工作流Code/版本_实例ID/` | **不读** |
+| 平台的 `dsTaskFile` | 平台文件服务 | **读** |
+
+实测：`FILE` 出参确实传成功了（`Upload output files: [...] successfully`，
+落到 `test/root/resources/DATA_TRANSFER/...`），但【查看结果】**仍然空白**。
+
+- **`FILE` 出参**：能用，但只对"把文件交给下游"有意义。`value` 填**相对执行目录**
+  的路径，文件不存在会让任务**失败**。
+- **`FILE` 入参**：**3.2.2 里是坏的，别用。** `downloadUpstreamFiles` 在下游 varPool
+  里按 `direct=IN` 过滤，而上游传下来的 varPool **全是 `direct=OUT`**
+  （`mergeVarPool` 只留 OUT），map 恒空 → 抛 `Can not find upstream file`。
+- **两个算子之间传文件**：走**共享目录**。上游写到 `/data/` 下的唯一文件名，
+  把**绝对路径**当普通 VARCHAR 出参传下去，下游直接读。
+  （前提是两个算子跑在同一个 worker 上 —— standalone 就是。多 worker 就不成立了。）
+
+### 把上传算子固化成常用算子
+
+**整个接口只有一条约定：上游出参必须叫 `filePath`（类型 `VARCHAR`，值是文件绝对路径）。**
+
+约定死这一个名字，上传算子就再也不用改：
+
+| 业务算子要做的 | 做法 |
+|---|---|
+| 产出文件（写 `/data/outbox/` 下的唯一名） | — |
+| 把路径发下去 | 出参栏加 `filePath`；脚本里 `print("${setValue(filePath=%s)}" % PATH)` |
+| 接到上传算子后面 | 前置任务连线，完事 |
+
+上传算子这一侧：
+
+- **入参 0 个** —— `filePath` 是上游出参，会自动替换进来
+- **出参默认一个都别加。** 这个算子的职责在"传完"那一刻就结束了，出参是给下游用的；
+  没人用就是纯累赘。`setValue` 对未声明的 key 静默丢弃，任务照样成功 ——
+  **所以它是真正的「零参数」算子，贴上去就能跑。**
+- **只有下游真要用时才加，而且只加要用的那个。** 常见是 `fileToken` ——
+  比如后面还要把它写进业务表。加了之后必须确认注册出来的参数 **`type` 不是空串**，
+  否则 worker 收尾会 NPE（见前面「脚本 exit 0 不等于任务成功」）。
+- 文件类型不用管，脚本按后缀自己识别（xlsx / csv / zip 都行）
+- 换环境只改脚本顶部三个常量：`BASE_URL` / `APP_KEY` / `APP_SECRET`
+
+> 注意：`filePath` 依赖"同一个 worker 上的共享目录"。standalone 只有一个 worker，成立；
+> 将来多 worker 就得改成走对象存储中转，这条约定才继续有效。
+
+`/data/outbox/` 会一直涨（每个实例留一个文件）。要么定期清，要么在上传成功后
+`os.remove(SRC)` —— 想留着排查就先别删。
+
+### 算子 B：三步调平台文件服务
+
+```
+① 取 token   POST 平台/api/authserver/app/getToken
+                json {"appKey": "...", "appSecret": "..."}
+                ← {"success":true,"code":20000,"message":"SUCCESS",
+                   "data":{"expireTime":...,"token":"eyJ..."}}
+
+② 传文件     POST 平台/api/filejava/Services/ServiceFDFS
+                multipart: action=upload, articleid=SJZT_SYSTEM, file=文件内容
+                超时要放大（jar 用 600000）
+                ← 要求 success 为真且 code==20000，取 data 作为 fileToken
+
+③ 登记       POST 平台/api/java-dolphin-wrap/dsTaskFile/saveFileInfo
+                json {projectCode, processCode, processInstanceId,
+                      taskInstanceId, taskCode, fileName, fileToken,
+                      fileSize, fileType, type}
+                ← code==20000 才算成功
+```
+
+- token **原样**放进 `Authorization` 头，**没有 `Bearer ` 前缀**
+- `type` 写死 `"file"`；`fileType` 给真实后缀（xlsx / zip / csv）
+- **第 ③ 步才是让它出现在【查看结果】里的那一步**，只做完 ② 不算
+- 纯标准库 `urllib` 就够，multipart 手搓约 20 行，不用引第三方包
+
+⚠️ **判成功必须归一化类型。** 接口回的 `code` 是**数字** `20000`。
+参照实现是 Java，`getStr("code")` 会把数字转成字符串；Python 的 `!=` 不会，
+`20000 != "20000"` 会**把成功的响应判成失败**。`success` 同理（`true` 或 `"true"`）。
+
+```python
+if str(j.get("code")) == "20000":      # 对
+    pass
+
+if j.get("code") == "20000":           # 错，永远不成立
+    pass
+```
+
+### 那 5 个 ID 从哪来
+
+`${system.project.code}` 这类**在脚本里不会被替换**（见前面的「入参：脚本侧」）。
+`${projectCode}` 这类短名只有**平台用「启动参数」启动**时才有，手工跑没有。
+
+**兜底：执行目录路径里白送 4 个**
+
+```
+/tmp/dolphinscheduler/exec/process/root/171431627380672/186911950210240_11/2106/3560
+                                     └projectCode────┘ └processCode──┘ └ver┘└procInst┘└taskInst┘
+```
+
+```python
+parts = os.getcwd().replace("\\", "/").rstrip("/").split("/")
+# parts[-4]=projectCode  parts[-3]="processCode_版本"
+# parts[-2]=流程实例id     parts[-1]=任务实例id
+```
+
+先取 `${projectCode}` 这类短名，取不到再落到这条。
+
+**`taskCode` 不在路径里**，先发 `"0"` —— 实测**不影响**文件出现在【查看结果】里。
+
+## 常用代码片段
+
+**依赖安装**
+
+已装的包**留在环境里，下次执行不用重装**。所以标准写法是两段：
+
+> ① 开头**只检查**（`find_spec`，毫秒级，不联网、不加载）
+> ② 缺了才装（一次装齐）；业务代码里正常 `import`
+
+```python
+import importlib.util as u
+import subprocess
+import sys
+
+# (pip 包名, 版本, import 名) —— 第三个必须写，且必须是能 import 的名字
+# 例：pip 叫 psycopg2-binary，import 却叫 psycopg2
+DEPS = [
+    ("pandas", "2.5.4", "pandas"),
+    ("pyarrow", "26.0.0", "pyarrow"),
+    ("psycopg2-binary", "2.9.13", "psycopg2"),
+]
+
+
+def check_deps(mods):
+    """只检查，不导入、不联网。返回装完仍缺的 import 名。"""
+    missing = [m for m in mods if u.find_spec(m[2]) is None]
+    if not missing:
+        print("[deps] 依赖已就绪")
+        return []
+    pkgs = ["%s==%s" % (m[0], m[1]) for m in missing]
+    print("[deps] 缺少 %d 个，安装: %s" % (len(pkgs), " ".join(pkgs)))
+    p = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--no-input",
+         "--disable-pip-version-check", "--no-warn-script-location"] + pkgs,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=600)
+    if p.returncode != 0:
+        print(p.stdout.decode("utf-8", "replace")[-2000:], file=sys.stderr)
+        sys.exit(2)
+    return [m[2] for m in missing
+            if u.find_spec(m[2]) is None]
+
+
+# ---------- 开头：只检查 ----------
+still = check_deps(DEPS)
+if still:
+    print("[deps] 安装后仍缺失: %s" % still, file=sys.stderr)
+    sys.exit(2)
+
+# ---------- 业务代码里正常 import ----------
+import pandas as pd
+import pyarrow.parquet as pq
+```
+
+要点：
+
+- 检查开销可以忽略（毫秒级）；`import pandas` 那 600 ms 是**业务代码本来就要付的代价**，别算在检查头上
+- **不要用 `import` 做检查**，也不要把 `import` 塞进 `check_deps` —— 用不到的包也会被整个加载
+- **缺包时一次装齐**，不要逐个装（pip 自身启动就要 300+ ms）
+- 版本号**必须钉死**，否则不同算子会互相覆盖同一个包
+
+**读写 Parquet / 对象存储**（推荐路线，不用 Spark）
+
+```python
+import pyarrow as pa, pyarrow.parquet as pq, pyarrow.fs as pafs
+
+s3 = pafs.S3FileSystem(access_key="...", secret_key="...",
+                       endpoint_override="S3_ENDPOINT_HOST:9002", scheme="http")
+with s3.open_output_stream("test/warehouse/out.parquet") as f:
+    pq.write_table(pa.table({"id": [1, 2]}), f)
+```
+
+**写 xlsx**：用 `openpyxl`（纯 Python，装得上）。工作目录会被清空，
+输出目录要给 `/data/` 这种持久路径，并把路径用出参发出去。
+
+**调 Spark**（需要分布式计算时才用）
+
+```python
+import os, subprocess
+env = os.environ.copy()
+env["PYSPARK_PYTHON"] = "/usr/bin/python3"
+env["PYSPARK_DRIVER_PYTHON"] = "/usr/bin/python3"
+subprocess.run(["/path/to/spark/bin/spark-submit", "job.py"], env=env, timeout=1800)
+```
+
+**查 DS 元数据库**
+
+```python
+import psycopg2
+conn = psycopg2.connect(host="PG_HOST", port=5432, dbname="DBNAME",
+                        user="postgres", password="见配置文件", connect_timeout=5)
+cur = conn.cursor()
+cur.execute("select state, var_pool from dolphinscheduler.t_ds_task_instance where id = %s",
+            (task_id,))
+```
+
+## 路径与存储
+
+| 路径 | 位置 | 可写 |
+|---|---|---|
+| `/data/` | 容器本地磁盘，约 128 GB 可用 | ✅ 中间结果首选 |
+| 容器本地 `/tmp` | 内存盘，执行结束即失 | ✅ 但易失 |
+| `/dev/` | 对象存储 | ✅ 持久 |
+| `/warehouse/` | 对象存储（Iceberg 仓库） | ✅ 持久 |
+| `/tmp/` | HDFS | ✅ |
+| `/user/` | HDFS | ✅ |
+| `/export/` | 与系统盘同盘，仅约 34 GB 可用 | ⚠️ 别放数据 |
+
+**未显式挂载的路径会落到对象存储。** 对象存储上：`rename` 不是原子操作、不能追加写、小文件 `list` 慢。
+
+## 容易踩的坑
+
+1. **依赖没装**：默认环境除 pip 外什么都没有，必须自己装并**钉死版本**。
+2. **参数没配**：占位符原样保留成字符串，不报错。
+3. **出参没声明**：`setValue` 静默失效，`var_pool` 为空。
+4. **SQL 出参名不等于列名**：值静默变成字符串 `"null"`。
+5. **接上游出参用了 `"..."`**：值里的引号把脚本写坏，报 SyntaxError。
+6. **在下游重复声明同名参数**：本地值把上游传过来的盖掉。
+7. **靠工作目录传文件**：执行结束目录被清空。要跨算子传就写 `/data/` 并把路径当出参发。
+8. **以为 `${system.*}` 能用**：脚本里取不到，静默留成字面量。
+9. **移植 Java 判等逻辑**：`getStr()` 会转类型，Python 不会。`code` 一律 `str()` 归一化。
+10. **用 Spark 忘了指定解释器**：默认 Python 3.14 会直接失败，必须 `PYSPARK_PYTHON=/usr/bin/python3`。
+11. **没设超时**：平台不设超时，死循环会永久占住执行器。
+12. **写死 `python` 命令**：环境里有多套 Python，用 `sys.executable`。
+13. **往 `/export` 写大数据**：和系统盘同盘，空间小。
+14. **注释里写了可解析的占位样例**：注释不豁免替换，多行值会把注释撑断 → `SyntaxError`。
+15. **参数嵌套的两种填法混用**：键级嵌套要填裸名；填成 `${名字}` 会拿到上游值再当名字查 → 查不到。
+16. **数据视图 `code` 也是数字 `20000`**：与平台文件服务同源，`str()` 归一化再判，`success` 一起判。
+17. **接口注入的 `rows` 字段**：每行都带行号 `rows`，不丢会让表头多一列、按列名取值也可能取到它。
+18. **把 `size` 当本页行数**：`size` 是 pageSize；末页判断用「本页行数 != size」或「累计到 total」。
+19. **JSON 列被包装**：平台把 JSON 列包成 `{"type":"json","value":"..."}`（可多层），要递归剥壳。
+20. **参数空值报 PG 转型错**：`invalid input syntax for type integer: ""` 是参数空不是 SQL 错；注册配默认值 + 核对 `queryParamList`。
+
+---

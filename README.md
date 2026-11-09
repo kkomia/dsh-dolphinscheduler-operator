@@ -5,6 +5,8 @@
 
 > A DeepSeek Harness bundle that ships a DolphinScheduler Python-operator skill and a matching agent preset.
 
+同一套算子规则另有一份 **Qoder 插件**（同事用 Qoder 时装它），见 [`qoder-plugin/`](qoder-plugin/)。
+
 ## 包含什么
 
 | 组成 | 说明 |
@@ -57,6 +59,25 @@
   按 Spring 语义把算子脚本渲染一遍再编译，顺带扫 `>` `<` `&`，能复现「注释里的占位样例
   被多行值撑断 → SyntaxError」这类肉眼漏掉的问题（`--self-test` 可先自检工具本身）。
 - 环境细节（你的集群的地址、配额、组件版本）由 `REFERENCE.md` 提供，见下节。
+
+## Qoder 版
+
+同一套算子规则也做成了一份 **Qoder 插件**，放在
+[`qoder-plugin/dolphinscheduler-operator/`](qoder-plugin/dolphinscheduler-operator/)。
+两版内容同源：入口 `SKILL.md` 只做任务分流，细节在 `references/`（脚本写法 / 参数与交付 /
+数据视图取数 / 环境事实模板）与 `scripts/render_placeholders.py` 自检工具里。
+
+- **装到 Qoder**：`Settings` → `Plugins` → 从本地文件夹导入，选
+  `qoder-plugin/dolphinscheduler-operator/`；或把打包出的 zip 拖进 Qoder 聊天窗口说
+  「安装这个插件」；CLI 为 `qoderclicn plugins install <zip 路径>`。
+- **打包 zip**：`python qoder-plugin/build-zip.py`，产物
+  `qoder-plugin/dolphinscheduler-operator-<version>.zip`，zip 根层直接是
+  `.qoder-plugin/plugin.json`。
+- **触发**：直接描述任务（如「帮这个算子写段 Python 脚本」），或 `/dolphinscheduler-operator`。
+- **维护**：改规则时 DSH 版的
+  `assets/skills/dolphinscheduler-python-operator/SKILL.md` 与 Qoder 版的
+  `qoder-plugin/dolphinscheduler-operator/skills/dolphinscheduler-python-operator/references/`
+  要一起改，并同步两边版本（`package.json` / `.qoder-plugin/plugin.json`）。
 
 ## 关于 `REFERENCE.md`
 
@@ -119,6 +140,11 @@ dsh-dolphinscheduler-operator/
   locale/{zh,en}.json   # 插件展示元数据
   icon.svg              # 插件图标
   LICENSE               # MIT
+  qoder-plugin/         # Qoder 版（同一套规则，可选）
+    build-zip.py        # 打 zip：python qoder-plugin/build-zip.py
+    dolphinscheduler-operator/
+      .qoder-plugin/plugin.json
+      skills/dolphinscheduler-python-operator/{SKILL.md,references/,scripts/}
 ```
 
 ## 更新与卸载
