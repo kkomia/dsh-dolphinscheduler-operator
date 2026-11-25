@@ -3,15 +3,15 @@
 # Targets DeepSeek Harness 0.2.2-rc.1 and mirrors the built-in Standard preset
 # (`@deepseek-ai/dsh-web-app/presets/standard.patch.yml`) for the tool set. The
 # deliberate deltas from Standard are the persona text, the tool-result-pruner
-# budgets, and one extra bundled skill provider row (this package's lib/index.js
-# serves the `dolphinscheduler-python-operator` skill).
+# budgets, and one extra bundled row (this package's lib/index.js serves the
+# `dolphinscheduler-python-operator` skill and the `/custom-operator` command).
 - insert:
     - id: preset-dolphinscheduler
       name: '@deepseek-ai/dsh-agent-preset'
       config:
         id: dolphinscheduler
         name: 海豚算子构建
-        description: 面向海豚调度（DolphinScheduler）Python 算子编写、入参/出参配置与取数（数据视图 / 对象存储）的构建模式，自带 dolphinscheduler-python-operator skill。
+        description: 面向海豚调度（DolphinScheduler）Python 算子编写、入参/出参配置与取数（数据视图 / 对象存储）的构建模式，自带 dolphinscheduler-python-operator skill 与 /custom-operator 定制算子命令。
         order: 20
         plugins:
           - id: persona
@@ -89,7 +89,7 @@
                 name: '@deepseek-ai/dsh-compaction-basic'
               - id: command-compact
                 name: '@deepseek-ai/dsh-command-compact'
-              # Standard's pruner thresholds would trim this skill's ~39K-character
+              # Standard's pruner thresholds would trim this skill's ~43K-character
               # body (threshold 8192), so keep the pruner but raise the bar: only
               # results over 48K characters lose their middle. The kernel requires
               # headChars + marker + tailChars <= thresholdChars: the marker is 39

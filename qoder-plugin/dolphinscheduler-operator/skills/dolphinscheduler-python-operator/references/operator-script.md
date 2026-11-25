@@ -2,6 +2,124 @@
 
 写或审查一段要粘进海豚 Python 算子的脚本时，以本文件为准。
 
+## 定制算子：一个算子做完，能确定的固化
+
+用户说「定制算子」时，按这一节做，**不要**套用通用算子模板。
+目标：**一个任务一份脚本，写完就能上，不为将来留扩展。**（DSH 版对应 `/custom-operator` 命令。）
+
+| 规则 | 做法 |
+|---|---|
+| 主体一个脚本 | 取数、清洗、计算、产出、`setValue` 都在同一个算子节点里，不拆 A/B/C |
+| 唯一例外：文件导出 | 只有「文件要出现在【查看结果】」时才拆第二个通用上传算子（见「导出文件的标准做法」）；只是把文件交给下游，单算子写 `/data/` 发绝对路径就够了 |
+| 能固化的固化 | 数据源（视图 viewId / MinIO 端点-桶-对象键 / 库表）、口径与列名、输出目录与文件名、时间窗口、超时，全部写在脚本顶部常量区 |
+| 参数最少 | 只留本次任务真的要外部决定的，**0~3 个**；能写死就不声明；上游出参不重复声明；出参只留下游或交付真正要用的 |
+| 不做通用化 | 不要多视图 Map、配置对象、插件式开关、兼容分支、用不到的兜底；新需求就再写一份 |
+| 交付精简 | 脚本 + 参数表（可能 0 行）+ 一句部署说明；仓库名 / 描述 / commit 只在用户要建仓库时补 |
+
+判断「这个参数该不该留」只有一句话：**换一次任务它会不会变？不变就写进常量。**
+
+### 什么固化、什么留参数
+
+| 东西 | 处理 |
+|---|---|
+| 数据源（viewId、桶 + 对象键、库表名） | 固化 |
+| 统计口径（年份、月份、过滤条件） | 固化；要每月自动变就按运行时间算，仍然不加参数 |
+| 输出目录 / 文件名 / 列名 / 断言行数列数 | 固化（文件名可带实例 id 防重名） |
+| 「同一份脚本明天还要按别的参数跑」 | 才留入参，且只留会变的那一个 |
+| 下游 / 交付真正要用的结果 | 才声明出参 |
+
+### 最小样子：0 个入参、1 个出参、单脚本产出文件
+
+```python
+# -*- coding: utf-8 -*-
+"""定制算子示例：数据视图取数、写 xlsx、把绝对路径发给下游。
+
+固定项全在顶部常量区；本节点不入参；出参只有 filePath。
+"""
+import importlib.util as u
+import json
+import os
+import subprocess
+import sys
+import urllib.request
+
+# ---------- 固定项：换任务只改这里，不加入参 ----------
+API_BASE = "http://PLATFORM_HOST:8998"
+VIEW_ID = "视图页 F12 抄到的 viewId"
+VIEW_PARAMS = [{"年份": "2026"}, {"月份": "10"}]
+OUT_DIR = "/data/outbox"
+OUT_NAME = "统计月报_2026-10.xlsx"
+TIMEOUT = 60
+DEPS = [("openpyxl", "3.1.5", "openpyxl")]
+
+URL = API_BASE.rstrip("/") + "/api/.DataView/view/v1/sql/resultAppend"
+
+
+def die(msg):
+    print("错误: %s" % msg, file=sys.stderr)
+    sys.exit(2)
+
+
+def check_deps(deps):
+    """只检查；缺了才装。"""
+    missing = [d for d in deps if u.find_spec(d[2]) is None]
+    if not missing:
+        return
+    pkgs = ["%s==%s" % (d[0], d[1]) for d in missing]
+    p = subprocess.run([sys.executable, "-m", "pip", "install", "--no-input",
+                        "--disable-pip-version-check"] + pkgs,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=600)
+    if p.returncode != 0:
+        die("装包失败: %s" % p.stdout.decode("utf-8", "replace")[-1000:])
+
+
+def fetch_rows():
+    body = json.dumps({"pageNumber": 1, "pageSize": 5000,
+                       "queryParamList": VIEW_PARAMS,
+                       "viewId": VIEW_ID}).encode("utf-8")
+    req = urllib.request.Request(URL, data=body, method="POST")
+    req.add_header("Content-Type", "application/json;charset=UTF-8")
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        doc = json.loads(resp.read().decode("utf-8", "replace"))
+    if str(doc.get("code")) != "20000":
+        die("视图返回失败: code=%s message=%s"
+            % (doc.get("code"), doc.get("message")))
+    data = doc.get("data") or {}
+    rows = data.get("list") or data.get("rows") or []
+    return [{k: v for k, v in row.items() if k != "rows"} for row in rows]
+
+
+def write_xlsx(rows):
+    import openpyxl
+    os.makedirs(OUT_DIR, exist_ok=True)
+    path = os.path.join(OUT_DIR, OUT_NAME)
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    cols = list(rows[0].keys())
+    ws.append(cols)
+    for row in rows:
+        ws.append([row.get(c) for c in cols])
+    wb.save(path)
+    return path
+
+
+check_deps(DEPS)
+rows = fetch_rows()
+if not rows:
+    die("视图返回 0 行：先按默认参数在视图页预览确认有数据")
+path = write_xlsx(rows)
+print("[out] %d 行，写到 %s" % (len(rows), path))
+print("${setValue(filePath=%s)}" % path)
+```
+
+参数表就只有一行：
+
+| 参数名 | 类型 | 必填 | 填什么 |
+|---|---|---|---|
+| filePath | VARCHAR | 出参 | value 留空，脚本写入文件绝对路径 |
+
+下游接通用上传算子即可（它按约定只认上游出参 `filePath`）。
+
 ## 符号写法对照（交付脚本必须遵守）
 
 脚本是靠**复制粘贴**进海豚的。实测：`>` 会在粘贴链路里变成 `&gt;`，

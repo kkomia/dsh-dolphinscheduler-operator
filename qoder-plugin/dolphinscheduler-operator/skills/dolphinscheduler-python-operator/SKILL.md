@@ -1,8 +1,8 @@
 ---
 name: dolphinscheduler-python-operator
-version: 1.4.0
-description: "Write, review, or fix Python operator scripts for DolphinScheduler 3.2.2 and fill in the operator's IN/OUT parameter table. Use when the user needs a runnable DolphinScheduler PYTHON task script, asks how to set operator parameters, why a global parameter is not replaced, why an OUT parameter has no value, how to pass SQL query results downstream, how to let users download produced files, why the script raises ModuleNotFoundError or cannot find a path, whether a parameter can reference another parameter name, how to read platform data views over the HTTP API and configure view parameters (@where / query params / where config), or how to fetch a file from object storage (MinIO S3 API, object-key encoding, anonymous read, HTML error bodies)."
-description_zh: 海豚调度（DolphinScheduler）Python 算子的脚本编写与【入参/出参】设置指导；也用于从平台「数据视图」HTTP 接口取数、配置视图参数（@where / 查询参数 / where 配置）并排查取数报错，以及从对象存储（MinIO）取文件（S3 端口、对象键编码、匿名读、错误体识别）。当需要生成、审查或修改一段要粘进海豚 Python 算子节点的脚本，或回答「参数怎么填」「类型下拉选什么」「value 要不要填」「出参为什么没值」「全局参数为什么没生效」「上游出参为什么是 null」「SQL 查询结果怎么传给下游」「产出文件怎么让人在查看结果里下载」「为什么报 ModuleNotFoundError / 路径找不到」「参数能不能引用另一个参数名（参数嵌套取值）」「数据视图怎么取数、viewId 从哪来、空值为什么报整数转型错」「MinIO 取数为什么下回来是 HTML」这类问题时激活。
+version: 1.5.0
+description: "Write, review, or fix Python operator scripts for DolphinScheduler 3.2.2 and fill in the operator's IN/OUT parameter table. Use when the user needs a runnable DolphinScheduler PYTHON task script, asks for a task-specific single custom operator (one script, hardcoded constants, minimal parameters), asks how to set operator parameters, why a global parameter is not replaced, why an OUT parameter has no value, how to pass SQL query results downstream, how to let users download produced files, why the script raises ModuleNotFoundError or cannot find a path, whether a parameter can reference another parameter name, how to read platform data views over the HTTP API and configure view parameters (@where / query params / where config), or how to fetch a file from object storage (MinIO S3 API, object-key encoding, anonymous read, HTML error bodies)."
+description_zh: 海豚调度（DolphinScheduler）Python 算子的脚本编写与【入参/出参】设置指导；也用于「定制算子」交付（单算子实现、能确定的固化在脚本内、只留最少参数），从平台「数据视图」HTTP 接口取数、配置视图参数（@where / 查询参数 / where 配置）并排查取数报错，以及从对象存储（MinIO）取文件（S3 端口、对象键编码、匿名读、错误体识别）。当需要生成、审查或修改一段要粘进海豚 Python 算子节点的脚本，或回答「参数怎么填」「类型下拉选什么」「value 要不要填」「出参为什么没值」「全局参数为什么没生效」「上游出参为什么是 null」「SQL 查询结果怎么传给下游」「产出文件怎么让人在查看结果里下载」「为什么报 ModuleNotFoundError / 路径找不到」「参数能不能引用另一个参数名（参数嵌套取值）」「数据视图怎么取数、viewId 从哪来、空值为什么报整数转型错」「MinIO 取数为什么下回来是 HTML」这类问题时激活。
 user-invocable: true
 ---
 
@@ -14,7 +14,7 @@ user-invocable: true
 
 | 任务 | 读这个文件 |
 |---|---|
-| 写 / 审查算子脚本：符号写法、脚本模板、入参读取、全局参数与 `prepareParamsMap`、接上游出参、出参、SQL 算子、对象存储（MinIO）取数、导出文件、常用片段、路径与存储、踩坑清单 | `references/operator-script.md` |
+| 写 / 审查算子脚本：符号写法、脚本模板、定制算子（单算子/固化常量/最少参数）、入参读取、全局参数与 `prepareParamsMap`、接上游出参、出参、SQL 算子、对象存储（MinIO）取数、导出文件、常用片段、路径与存储、踩坑清单 | `references/operator-script.md` |
 | 填【入参/出参】表、类型下拉、value 留空、报错排查、最终交付物（仓库名 / 描述 / commit comment） | `references/params-and-delivery.md` |
 | 从平台「数据视图」取数：取数接口、`@where` / 查询参数 / where 配置三处参数、内网地址边界、取数排错 | `references/data-view.md` |
 | 集群侧环境事实（解释器、pip、目录、权限、超时、平台版本） | 先看 `references/environment.md`；没有就以 `references/environment.example.md` 的 17 个方面去问用户或实测，**不要编造** |
@@ -44,6 +44,7 @@ user-invocable: true
 | 内网地址 | 本 skill 里的 IP 与主机名**全是内网**（如 `23.36.2.60`），互联网环境访问不到，**不要主动请求** |
 | 视图参数 | 注册页配 `年份` / `月份`（必填 + 默认值），where 配置三条；空值会报 PG 整数转型错 |
 | 对象存储取数 | MinIO 走 S3 API `http://MINIO_HOST:9000`（`:9001` 是控制台网页）；对象键 `quote(key, safe="/")`；桶开匿名读就不用密钥 |
+| 定制算子 | 一个算子做完（文件导出除外）；能确定的固化在顶部常量；参数 0~3 个；不做通用化 |
 
 ## 硬约束（交付前逐条过）
 
@@ -58,6 +59,7 @@ user-invocable: true
 9. 交付脚本必须先存在于磁盘，再贴进对话——只贴对话、没落盘的代码扫不到。
 10. 环境事实（解释器、目录、权限、超时）没实测就标 `[推断]`/`[未决]`，不要编。
 11. 用全局参数就**别在节点上声明同名入参**（本地空值会把全局值盖成空）；参数值不对先看日志 `prepareParamsMap`，再猜别的。
+12. 定制算子就**一个算子做完**（文件导出除外）：能确定的写死进顶部常量，参数 0~3 个，不做通用化。
 
 ## 交付前自检（本机有 Python 时）
 

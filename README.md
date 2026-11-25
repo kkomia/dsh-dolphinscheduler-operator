@@ -12,6 +12,7 @@
 | 组成 | 说明 |
 |---|---|
 | Agent 模式 `dolphinscheduler` | 显示名「海豚算子构建」。工具集对齐 **dsh 0.2.2-rc.1 内置 Standard 模式**（文件读写/搜索、shell、job、schedule、skill、goal、plan、compaction、subagent、workflow、web、todo、ask_user、present），persona 改为海豚算子专家，并要求动手写算子前先加载 skill。 |
+| 命令 `/custom-operator` | 显示名「定制算子」。输入 `/custom-operator <需求>` 直接开工：**一个算子做完**（文件导出除外）、能确定的固化在脚本顶部常量、参数只留 0~3 个、不做通用化。命令只在该模式下可见（agent 级注册），实现见 `lib/index.js`。 |
 | Skill `dolphinscheduler-python-operator` | 海豚调度（DolphinScheduler 3.2.2）Python 算子编写规范 + 入参/出参填写指导，含**全局参数与 `prepareParamsMap` 查表**（不声明也生效、声明同名空入参会盖空、空值三形态与容错读法）、参数嵌套取值（入参填上游出参名字）与注释不豁免替换等实战陷阱；**从平台「数据视图」HTTP 接口取数**（接口契约、翻页与 `rows` 清洗、视图参数三处配置、空值报错排查）与算子侧断言/默认时间窗口；**从对象存储（MinIO）取文件**（S3 端口辨析、对象键 `quote(key, safe="/")`、匿名读、错误体识别与可复制骨架）；自带交付前占位符渲染自检工具；末尾规定最终交付清单（脚本 / 参数表 / 推荐仓库名 / 仓库描述 / 提交注释，依赖数据视图时加视图注册清单）。由 `lib/index.js` 从包内 `assets/skills/` 直接注册，不依赖 `~/.dsh/skills`。 |
 | 环境报告模板 | `assets/skills/dolphinscheduler-python-operator/REFERENCE.example.md`，说明如何为你自己的调度集群补一份 `REFERENCE.md`。 |
 
@@ -42,7 +43,12 @@
 
 - 选择「海豚算子构建」模式后，模型在编写/审查算子脚本前会先调用 `skill` 加载
   `dolphinscheduler-python-operator`；也可以直接输入 `/dolphinscheduler-python-operator` 手动触发。
+- **定制算子**：在该模式里输入 `/custom-operator <需求>`（例：`/custom-operator 用统计视图出
+  2026 年 10 月的月报 xlsx，下游上传算子接 filePath`）。命令会把「单算子、能确定的固化、
+  参数 0~3 个、不做通用化」的任务说明和你的需求一起交给模型，并立即开新一轮；
+  缺需求或想重来就再发一次命令。
 - skill 覆盖：解释器与装包、执行目录与存储语义、入参/出参写法、`setValue` 语法、
+  **定制算子**（单算子做完、能确定的固化、参数 0~3 个、不做通用化，含最小示例）、
   **全局参数与 `prepareParamsMap`**（不声明也生效；声明同名空入参会把全局值盖空；
   空值三形态与 `is_blank` / `pick` 容错读法）、交付脚本的字符限制（`>` `<` `&`）、
   参数嵌套取值（参数值填另一个参数名）、注释不豁免替换等实战陷阱、常见错误与排查路径，
@@ -54,6 +60,7 @@
   ③ 推荐仓库名（统一 `dolphinscheduler-` 前缀，如 `dolphinscheduler-llm-operator`）
   ④ 仓库描述 ⑤ 本次提交的 comment（conventional commit）；算子依赖平台数据视图时
   再加第 ⑥ 样**视图注册清单**（视图名 / SQL 主文件 / 参数 / 返回行数×列数 / viewId）。
+  走定制算子时精简为 ① 脚本 ② 参数表（可能 0 行）③ 一句部署说明。
 - **网络边界**：skill 与环境报告里出现的**所有 IP、主机名都是内网地址**（含 `23.36.2.60`、
   `23.26.x.x` 这类环境地址，以及 `10.x` / `192.168.x` / `172.16–31.x` / `100.64.x` 等私有网段）。
   它们只能在**海豚执行环境（内网）**访问，互联网环境访问不到——**不要**用 `web_fetch`、
@@ -67,8 +74,9 @@
 
 同一套算子规则也做成了一份 **Qoder 插件**，放在
 [`qoder-plugin/dolphinscheduler-operator/`](qoder-plugin/dolphinscheduler-operator/)。
-两版内容同源：入口 `SKILL.md` 只做任务分流，细节在 `references/`（脚本写法 / 参数与交付 /
-数据视图取数 / 环境事实模板）与 `scripts/render_placeholders.py` 自检工具里。
+两版内容同源：入口 `SKILL.md` 只做任务分流，细节在 `references/`（脚本写法 /
+定制算子 / 参数与交付 / 数据视图取数 / 环境事实模板）与 `scripts/render_placeholders.py`
+自检工具里。Qoder 版没有命令面，定制算子以「用户说定制算子」触发同一套规则。
 
 - **装到 Qoder**：`Settings` → `Plugins` → 从本地文件夹导入，选
   `qoder-plugin/dolphinscheduler-operator/`；或把打包出的 zip 拖进 Qoder 聊天窗口说
@@ -107,7 +115,7 @@ assets/skills/dolphinscheduler-python-operator/REFERENCE.md
 ## 有意的设计选择
 
 - **调高 `tool-result-pruner` 阈值**：Standard 默认 `thresholdChars: 8192`，而本 skill 正文约
-  3.9 万字符，按标准阈值加载后会被裁到 4 K 头 + 1 K 尾，长会话里模型可能丢失算子规则。
+  4.3 万字符，按标准阈值加载后会被裁到 4 K 头 + 1 K 尾，长会话里模型可能丢失算子规则。
   这里保留裁剪器但把阈值调到 49152 字符（头 43008 / 尾 6100，内核要求
   `headChars + 标记 + tailChars <= thresholdChars`，标记 39 字符 → 49147 通过）。
 - **与 Standard 的刻意差异**：`cordis.patch.yml` 的 preset 逐行对齐
@@ -124,6 +132,7 @@ assets/skills/dolphinscheduler-python-operator/REFERENCE.md
 | `0.2.1-rc.2` | `1.2.0` | 首版：自带 skill provider + 海豚算子构建模式。 |
 | `0.2.2-rc.1` | `1.3.0` | preset 对齐 Standard：`tool-subagent` 改用 `modelSelection` / `modelDiscovery`（旧键 `modelSelectionSettings` 被静默忽略）、`tool-fs` 关掉 `apply_patch`、`tool-plugin-manager` 按 `profileContext` 条件启用、删除内核已合并掉的 `tool-subagent-control/list-agents` 行；`package.json` 增加 `dsh.manifestVersion: 1` 与 `engines.dsh`；skill 补「从平台数据视图取数」。 |
 | `0.2.2-rc.1` | `1.4.0` | 内核接口不变，只补 skill 内容：全局参数与 `prepareParamsMap`（按实测更正两处旧说法）、出参名逐字匹配与双名兜底、从对象存储（MinIO）取数与错误体识别；`REFERENCE.example.md` 增至 17 个方面；Qoder 版同步。 |
+| `0.2.2-rc.1` | `1.5.0` | 新增 `/custom-operator` 命令（agent 级，仅本模式可见）：单算子、能确定的固化、参数 0~3 个、不做通用化；skill 补「定制算子」一节与最小示例，交付清单可按定制模式精简；Qoder 版同步。 |
 
 升级内核后建议的验证顺序：`dsh --profile <临时 profile> --dump-config` 能组合出 preset →
 在 App 的模式列表里出现「海豚算子构建」→ 新建该模式会话能正常加载 skill。
@@ -134,7 +143,7 @@ assets/skills/dolphinscheduler-python-operator/REFERENCE.md
 dsh-dolphinscheduler-operator/
   package.json          # dsh.bundle.patch 指向 cordis.patch.yml
   cordis.patch.yml      # 插入 preset-dolphinscheduler（@deepseek-ai/dsh-agent-preset 实例）
-  lib/index.js          # skill provider：读 assets/skills/ 并 ctx.skills.register
+  lib/index.js          # skill provider（注册 skill）+ /custom-operator 命令（agent 级）
   assets/skills/dolphinscheduler-python-operator/
     SKILL.md            # skill 正文（公开）
     REFERENCE.example.md# 环境报告模板（公开）

@@ -1,9 +1,9 @@
 {
   "name": "dolphinscheduler-operator",
   "displayName": "海豚 Python 算子",
-  "version": "1.4.0",
-  "description": "Write, review and ship Python operator scripts for DolphinScheduler 3.2.2: parameter tables, global-parameter lookup, outputs, SQL result passing, file delivery, reading data views through the platform HTTP API, and fetching files from object storage (MinIO).",
-  "descriptionZh": "海豚调度（DolphinScheduler 3.2.2）Python 算子编写与【入参/出参】设置指导，含全局参数查表、平台「数据视图」HTTP 取数、对象存储（MinIO）取数。",
+  "version": "1.5.0",
+  "description": "Write, review and ship Python operator scripts for DolphinScheduler 3.2.2: task-specific custom operators (one script, hardcoded constants, minimal parameters), parameter tables, global-parameter lookup, outputs, SQL result passing, file delivery, reading data views through the platform HTTP API, and fetching files from object storage (MinIO).",
+  "descriptionZh": "海豚调度（DolphinScheduler 3.2.2）Python 算子编写与【入参/出参】设置指导，含定制算子（单算子、固化常量、最少参数）、全局参数查表、平台「数据视图」HTTP 取数、对象存储（MinIO）取数。",
   "author": {
     "name": "kkomia"
   },
