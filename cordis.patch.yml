@@ -11,7 +11,7 @@
       config:
         id: dolphinscheduler
         name: 海豚算子构建
-        description: 面向海豚调度（DolphinScheduler）Python 算子编写与入参/出参配置的构建模式，自带 dolphinscheduler-python-operator skill。
+        description: 面向海豚调度（DolphinScheduler）Python 算子编写、入参/出参配置与取数（数据视图 / 对象存储）的构建模式，自带 dolphinscheduler-python-operator skill。
         order: 20
         plugins:
           - id: persona
@@ -89,17 +89,17 @@
                 name: '@deepseek-ai/dsh-compaction-basic'
               - id: command-compact
                 name: '@deepseek-ai/dsh-command-compact'
-              # Standard's pruner thresholds would trim this skill's ~30K-character
+              # Standard's pruner thresholds would trim this skill's ~39K-character
               # body (threshold 8192), so keep the pruner but raise the bar: only
-              # results over 32K characters lose their middle. The kernel requires
+              # results over 48K characters lose their middle. The kernel requires
               # headChars + marker + tailChars <= thresholdChars: the marker is 39
-              # characters, so 28672 + 39 + 3072 = 31783 <= 32768.
+              # characters, so 43008 + 39 + 6100 = 49147 <= 49152.
               - id: tool-result-pruner
                 name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
                 config:
-                  thresholdChars: 32768
-                  headChars: 28672
-                  tailChars: 3072
+                  thresholdChars: 49152
+                  headChars: 43008
+                  tailChars: 6100
           - id: delegation
             name: cordis:group
             group: true

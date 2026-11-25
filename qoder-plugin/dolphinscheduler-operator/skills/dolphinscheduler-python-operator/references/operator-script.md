@@ -98,7 +98,7 @@ sys.exit(0 if ok else 2)
 |---|---|
 | **上游任务的 OUT 参数** | **千万别写** |
 | 本节点的本地参数（IN） | 要写 |
-| 全局参数 / 工作流级参数 | **要写**，且本地参数的值填成全局参数的 key |
+| **全局参数 / 工作流级参数** | **不用写**，`prepareParamsMap` 里本来就有 [实测] |
 | `system.*`（项目/工作流/任务 ID、业务日期） | **写了也取不到**，见下 |
 
 **上游出参为什么千万别写**：优先级是
@@ -107,14 +107,116 @@ sys.exit(0 if ok else 2)
 （实测：某任务的 `localParams` 里没有 `org_code`，脚本里 `${org_code}` 照样被替换。）
 
 **`system.*` 是个陷阱**：它们在 `prepareParamsMap` 里**有键有值**，
-但脚本里 `${system.project.code}` **不会被替换**（实测两次）。`参数1` 这类
-全局参数同样不替换。**要什么值，就让上游用出参传下来，或者自己声明一个带值的入参。**
+但脚本里 `${system.project.code}` **不会被替换**（实测两次）。
+**要什么值，就让上游用出参传下来，或者自己声明一个带值的入参。**
+
+平台自带一个全局参数 `参数1=v1`（下面那张表的第 4 条），它跟本节点配了什么无关 ——
+别看到它就以为是自己节点配的值。
 
 > 过滤发生在哪一层**尚未定位**——`PropertyPlaceholderHelper` 通读过，
 > 对占位符名字没有任何字符限制。按实测用就行，别去推导。
 >
 > 例外：**平台用「启动参数」启动工作流时**，`${projectCode}` 这类短名是能拿到的。
 > 手工从 UI 点运行就没有。兜底办法见「那 5 个 ID 从哪来」。
+
+#### 表里到底有什么：`prepareParamsMap`
+
+平台派发任务时先拼这张表，脚本里的 `${名字}` 就是拿它**查表替换**。
+任务日志里 `End initialize task {...}` 能看到它（脱敏后）[实测]：
+
+```json
+"prepareParamsMap" : {
+  "stat_year" : {"prop":"stat_year","direct":"IN","type":"VARCHAR","value":"2026"},
+  "dry_run"   : {"prop":"dry_run","direct":"IN","type":"VARCHAR","value":""},
+  "filepath"  : {"prop":"filepath","direct":"OUT","type":"VARCHAR","value":null},
+  "参数1"     : {"prop":"参数1","direct":"IN","type":"VARCHAR","value":"v1"},
+  "system.project.code" : {"prop":"system.project.code","direct":"IN","type":"VARCHAR","value":"<项目ID>"}
+}
+```
+
+四条结论，按重要性排：
+
+| # | 结论 | 证据 |
+|---|---|---|
+| 1 | **全局参数直接在这张表里**，节点【入参】为空也能替换成功 | [实测] 三个参数只配在全局参数里，节点没声明，脚本取到 `'2026' / '10' / ''` |
+| 2 | 上游传下来的 OUT 参数也在表里，`direct` 是 `OUT`，没发值时是 `null` | [实测] `"filepath": {"direct":"OUT","value":null}` |
+| 3 | `system.*` 有键有值，但脚本里 `${system.xxx}` **不会被替换** | [实测，两次] |
+| 4 | 平台自带一个全局参数 `参数1=v1`，别被它误导成本节点的值 | [实测] |
+
+> 所以「声明入参」不是申请权限，而是往这张表里加一条；**表里本来就有的，不声明也能取到。**
+
+**排查顺序（别靠猜）**：参数值不对时先翻日志里这张表 ——
+① 有没有这个键（没有 = 名字拼错 / 没配）；② `value` 是什么（`null` = 上游 OUT 没发值，`""` = 配了空值）；
+③ 本节点有没有同名空入参把全局值盖掉。
+
+#### 全局参数 / 工作流参数：配在项目里，节点上不用声明
+
+| 配法 | 脚本里怎么写 | 要不要在本节点声明【入参】 |
+|---|---|---|
+| 全局参数（项目级） | `${stat_year}` | **不用** [实测] |
+| 工作流定义里的「工作流参数」 | `${stat_year}` | 不用 [推断] |
+| 本节点本地参数 | `${stat_year}` | 要，且 value 必须填值 |
+
+推荐配法：**统计年 / 月份 / 是否干跑这类跨工作流共享的配置放全局参数，节点上什么都不声明** ——
+改名只改一处，不用改每个节点。本项目实际配置 [实测]：
+
+```
+全局参数：stat_year = 2026
+          end_month = 10
+          dry_run   = （空）
+导出节点【入参】：空
+导出节点【出参】：filePath（VARCHAR，value 留空）
+```
+
+日志里能看到替换成功：`[入参] stat_year = '2026'  end_month = '10'  dry_run = ''`。
+
+优先级：**启动参数 高于 本地参数 高于 上游传入 高于 全局参数**。
+
+- **坑一：在本节点又声明了同名入参。** 本地参数优先级更高，值留空就把全局值**盖成空**。
+  既然用全局参数，节点上就别再声明。
+- **坑二：在下游重复声明上游的 OUT 参数。** 同上，本地那个空值会盖掉上游传下来的值。
+  上游的 OUT 参数在下游**一个字都不要写**。
+
+> 旧说法「全局参数要在本节点声明一条入参、value 填成全局参数的 key」**已被实测推翻**：
+> 不声明就生效；反而声明了同名空入参会把值盖空。只有想在本节点覆盖全局值时才声明，且必须填值。
+
+#### 空值的三种形态（自检必须都判）
+
+| 形态 | 什么时候出现 |
+|---|---|
+| 字面量（没替换的占位） | 表里没有这个键（拼错、没配） |
+| 空字符串 `""` | 配了但值为空（`dry_run` 这种「空 = 不干跑」的开关就是空串） |
+| `null` / `None` | 上游 OUT 声明了但没发 `setValue`，或值为空 |
+
+```python
+PH = "$" + "{"          # 拼出来写，脚本里不留残缺的占位前缀
+
+
+def is_blank(raw):
+    t = (raw or "").strip()
+    if not t:
+        return True                       # 空串
+    if t.startswith(PH):
+        return True                       # 没替换
+    return t in ("null", "NULL", "None", "undefined")
+
+
+def pick(*cands):
+    """按顺序取第一个「已替换且非空」的值；全空返回 None。"""
+    for c in cands:
+        v = (c or "").strip()
+        if v and not v.startswith(PH):
+            return v
+    return None
+```
+
+两通道写法（同一份语义，参数名大小写写错也能救回来）：
+
+```python
+A = "${filePath}".strip()
+B = "${filepath}".strip()
+SRC = pick(A, B)
+```
 
 **必做**：每个入参都做未替换自检。未配置的参数会**原样留成字面量** `"${target_dir}"`，不会报错，只会静默出错。
 
@@ -231,6 +333,30 @@ print("${setValue(key=value)}")
 - 同名 key 重复发是**覆盖**，不是追加
 - 任务失败时不落库
 
+### 出参名逐字匹配：`filePath` 和 `filepath` 是两个键
+
+平台按键名**精确查表**，差一个大小写就取不到。本项目踩过的完整链条 [实测]：
+
+1. 导出节点【出参】声明的是全小写 `filepath`；
+2. 导出脚本只 `print("[出参] filePath = ...")` 打了给人看的日志，**没发 `setValue`**；
+3. 于是下游 `prepareParamsMap` 里只有 `"filepath": {"direct":"OUT","value":null}`；
+4. 上传算子读的是 `${filePath}` → 取不到 → 报「上游没传 filePath 过来」。
+
+修法两条，缺一不可：
+
+```python
+# ① 脚本里真发 setValue（打在 print 里，平台从输出里取）
+print("${setValue(filePath=%s)}" % PATH)
+print("${setValue(filepath=%s)}" % PATH)      # 小写别名兜底
+
+# ② 下游两个名字都读
+SRC = pick("${filePath}", "${filepath}")
+```
+
+- 未声明的 key 是**静默丢弃**（不报错、任务照样成功），所以「两个名字都发」零成本；
+- 值里有换行要发 `repr(value)`；
+- 任务失败时不落库 —— 上游失败，下游永远读不到它的出参。
+
 ### 脚本 exit 0 **不等于**任务成功
 
 DS 在脚本跑完之后还有一段"收尾"（`WorkerTaskExecutor.afterExecute`）：发告警 →
@@ -285,6 +411,154 @@ select to_json(t)::text as sqlresult from 库.表 t
 - 用 `to_json`，**别用 `to_jsonb`** —— jsonb 会按 key 长度重排列顺序
 - 下游要同时认两种形状：多行是 JSON 数组，单行是裸对象
 - 查询结果**最多 10000 行**（查询上限填 0 时的默认值），**静默截断**
+
+## 从对象存储（MinIO）取数
+
+算子的输入文件常放在对象存储上。取文件只用标准库 `urllib`，**不需要 boto3、不用装包**。
+
+### 端点与端口
+
+| 地址 | 是什么 | 用法 |
+|---|---|---|
+| `http://MINIO_HOST:9000` | S3 API | **取文件用这个** |
+| `http://MINIO_HOST:9001` | 控制台网页 | 浏览器里看桶、传文件 |
+| `:9002` | 业务那台 MinIO 上**拒绝连接**（DS 资源中心另有 9002，是另一套） | 不要用它取业务文件 |
+
+**用错端口会拿到一整个 HTML 页面**：HTTP 200、内容是控制台首页，`openpyxl.load_workbook`
+报「不是 zip」，非常容易误判成「文件坏了」[实测]。
+所以下载完**先验内容、再交给解析器**（见下面的 `classify_blob`）。
+
+### 对象键的编码
+
+键里有中文、空格、破折号时，必须**按路径分段编码、保留斜杠**：
+
+```python
+import urllib.parse
+
+KEY = "统计月报/2026年/1-10月—示例报表_20260318.xlsx"
+URL = "http://MINIO_HOST:9000/template/" + urllib.parse.quote(KEY, safe="/")
+```
+
+`safe="/"` 不能省：整体 `quote` 会把 `/` 也编码成 `%2F`，S3 就找不到这个对象 [实测]。
+
+### 匿名读
+
+桶策略放开匿名 GET 之后，直接 `urlopen` 就行，不用 AccessKey / SecretKey [实测]：
+
+```python
+import urllib.request
+
+with urllib.request.urlopen(URL, timeout=60) as r:
+    data = r.read()
+```
+
+没开匿名读就让管理员给匿名 `s3:GetObject`（本项目没走签名）。
+
+### 先分出「看着像成功」的几种错误
+
+```python
+MAGIC_ZIP = b"PK"      # xlsx 就是 zip
+MAGIC_LT = b"\x3c"     # 尖括号的字节写法：转义写，避开脚本禁用字符
+
+
+def classify_blob(data):
+    """判断下回来的东西到底是什么。"""
+    head = data[:200].lstrip()
+    if head[:2] == MAGIC_ZIP:
+        return "zip/xlsx"
+    if head[:1] == MAGIC_LT:
+        text = data[:2000].decode("utf-8", "replace")
+        if "NoSuchKey" in text:
+            return "NoSuchKey（对象键不对）"
+        if "AccessDenied" in text:
+            return "AccessDenied（没权限）"
+        if "SignatureDoesNotMatch" in text:
+            return "签名错（用了签名地址又改了参数）"
+        if "DOCTYPE html" in text or "console" in text.lower():
+            return "这是一个网页（端口选错了，9001 是控制台）"
+        return "未知 XML 错误: " + text[:200]
+    return "未知内容，前 16 字节: %r" % (head[:16],)
+```
+
+对应处置：
+
+| 现象 | 原因 |
+|---|---|
+| `AccessDenied` | 桶 / 前缀没开匿名读，或用了别的账号；让管理员给匿名 `s3:GetObject` |
+| `NoSuchKey` | 对象键不对（大小写、空格、全角破折号都要逐字抄） |
+| 拿到 HTML | 端口用了 9001（控制台） |
+| 连不上 | worker 到 MinIO 的网络 / 端口不通，先在 worker 上探 9000 端口 |
+
+### 别用平台的「全局文件参数」当取数入口
+
+本项目试过、放弃了 [实测]：
+
+- 上传到「全局文件参数」后，拿到的只是**一个被改名后的文件名**（形如
+  `e4ae16f48ff95f1d5aec1a82bec.xlsx`），不是路径、也不是内容；
+- 任务日志里 `Download resources successfully:` 与 `Download upstream files: []` 都是空的；
+- 真正能拿到内容的是 **MinIO 对象键**（本项目做法）或平台的 `dsTaskFile` 文件服务（走 HTTP）。
+
+结论：**文件走对象存储，参数里只传「对象键」这种纯文本** —— 最透明、最好排错。
+
+### 和 DS 资源中心的 MinIO 不是同一个
+
+- DS 资源中心：S3 端点 `:9002`、bucket `test`，路径形如
+  `root/resources/DATA_TRANSFER/日期/工作流Code/版本_实例ID/`；
+- 业务文件桶（本项目）：S3 API `:9000`、bucket `template`。
+
+两套别混：`FILE` 类型的参出参只对「把文件交给下游」有意义，【查看结果】里不会出现，
+要出现必须调平台文件服务登记（见「导出文件的标准做法」）。
+
+### 可复制的取数骨架
+
+```python
+import sys
+import urllib.parse
+import urllib.request
+
+MINIO_HOSTS = ("http://MINIO_HOST:9000",)   # 按顺序试；9001 是控制台，别写进来
+BUCKET = "template"
+KEY = "统计月报/2026年/1-10月—示例报表_20260318.xlsx"
+TIMEOUT = 120
+
+
+def die(msg):
+    print("错误: %s" % msg, file=sys.stderr)
+    sys.exit(2)
+
+
+def encode_url(host, bucket, key):
+    return "%s/%s/%s" % (host.rstrip("/"), bucket, urllib.parse.quote(key, safe="/"))
+
+
+def download(key, dest):
+    last = ""
+    for host in MINIO_HOSTS:
+        url = encode_url(host, BUCKET, key)
+        try:
+            with urllib.request.urlopen(url, timeout=TIMEOUT) as r:
+                data = r.read()
+        except Exception as exc:
+            last = "%s 请求失败: %r" % (host, exc)
+            print("[minio] %s" % last)
+            continue
+        kind = classify_blob(data)
+        if kind != "zip/xlsx":
+            last = "%s 回来的是 %s" % (host, kind)
+            print("[minio] %s" % last)
+            continue
+        with open(dest, "wb") as f:
+            f.write(data)
+        print("[minio] %s  %d 字节" % (url, len(data)))
+        return dest
+    die("取不到对象 %s：%s" % (key, last))
+```
+
+要点：
+
+- 落地名要给 `/data/` 下的**唯一名**；工作目录执行完会被清空；
+- 拿到路径后按「导出文件的标准做法」发 `filePath` 出参，下游就接得上；
+- 换环境只改 `MINIO_HOSTS` / `BUCKET` 两个常量；端口写错会一路走到「回来的是网页」。
 
 ## 导出文件的标准做法（**已跑通**）
 
@@ -538,5 +812,10 @@ cur.execute("select state, var_pool from dolphinscheduler.t_ds_task_instance whe
 18. **把 `size` 当本页行数**：`size` 是 pageSize；末页判断用「本页行数 != size」或「累计到 total」。
 19. **JSON 列被包装**：平台把 JSON 列包成 `{"type":"json","value":"..."}`（可多层），要递归剥壳。
 20. **参数空值报 PG 转型错**：`invalid input syntax for type integer: ""` 是参数空不是 SQL 错；注册配默认值 + 核对 `queryParamList`。
+21. **全局参数又在节点上声明了一遍**：本地空值把全局值盖成空串。用全局参数就别在节点声明。
+22. **把 MinIO 控制台端口当 S3 端口**：`:9001` 回来的是 HTML（200 状态码），解析器报「不是 zip」；取数用 `:9000`。
+23. **对象键整体 `quote`**：`/` 变 `%2F` → `NoSuchKey`。要 `quote(key, safe="/")`。
+24. **用「全局文件参数」传文件**：拿到的只是个改名后的文件名，不是路径也不是内容。文件走对象存储，参数只传对象键。
+25. **出参名大小写差一个**：`filePath` 和 `filepath` 是两个键，下游读到 `null`。发 `setValue` 时两个名字都发。
 
 ---

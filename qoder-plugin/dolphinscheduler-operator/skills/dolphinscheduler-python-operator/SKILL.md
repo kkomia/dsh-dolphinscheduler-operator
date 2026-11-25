@@ -1,23 +1,23 @@
 ---
 name: dolphinscheduler-python-operator
-version: 1.3.0
-description: "Write, review, or fix Python operator scripts for DolphinScheduler 3.2.2 and fill in the operator's IN/OUT parameter table. Use when the user needs a runnable DolphinScheduler PYTHON task script, asks how to set operator parameters, why an OUT parameter has no value, how to pass SQL query results downstream, how to let users download produced files, why the script raises ModuleNotFoundError or cannot find a path, whether a parameter can reference another parameter name, or how to read platform data views over the HTTP API and configure view parameters (@where / query params / where config)."
-description_zh: 海豚调度（DolphinScheduler）Python 算子的脚本编写与【入参/出参】设置指导；也用于从平台「数据视图」HTTP 接口取数、配置视图参数（@where / 查询参数 / where 配置）并排查取数报错。当需要生成、审查或修改一段要粘进海豚 Python 算子节点的脚本，或回答「参数怎么填」「类型下拉选什么」「value 要不要填」「出参为什么没值」「SQL 查询结果怎么传给下游」「产出文件怎么让人在查看结果里下载」「为什么报 ModuleNotFoundError / 路径找不到」「参数能不能引用另一个参数名（参数嵌套取值）」「数据视图怎么取数、viewId 从哪来、空值为什么报整数转型错」这类问题时激活。
+version: 1.4.0
+description: "Write, review, or fix Python operator scripts for DolphinScheduler 3.2.2 and fill in the operator's IN/OUT parameter table. Use when the user needs a runnable DolphinScheduler PYTHON task script, asks how to set operator parameters, why a global parameter is not replaced, why an OUT parameter has no value, how to pass SQL query results downstream, how to let users download produced files, why the script raises ModuleNotFoundError or cannot find a path, whether a parameter can reference another parameter name, how to read platform data views over the HTTP API and configure view parameters (@where / query params / where config), or how to fetch a file from object storage (MinIO S3 API, object-key encoding, anonymous read, HTML error bodies)."
+description_zh: 海豚调度（DolphinScheduler）Python 算子的脚本编写与【入参/出参】设置指导；也用于从平台「数据视图」HTTP 接口取数、配置视图参数（@where / 查询参数 / where 配置）并排查取数报错，以及从对象存储（MinIO）取文件（S3 端口、对象键编码、匿名读、错误体识别）。当需要生成、审查或修改一段要粘进海豚 Python 算子节点的脚本，或回答「参数怎么填」「类型下拉选什么」「value 要不要填」「出参为什么没值」「全局参数为什么没生效」「上游出参为什么是 null」「SQL 查询结果怎么传给下游」「产出文件怎么让人在查看结果里下载」「为什么报 ModuleNotFoundError / 路径找不到」「参数能不能引用另一个参数名（参数嵌套取值）」「数据视图怎么取数、viewId 从哪来、空值为什么报整数转型错」「MinIO 取数为什么下回来是 HTML」这类问题时激活。
 user-invocable: true
 ---
 
 # 海豚 Python 算子
 
-海豚调度（DolphinScheduler 3.2.2）Python 算子的实战规则：脚本怎么写、参数表怎么填、出参怎么传、数据视图怎么取数。
+海豚调度（DolphinScheduler 3.2.2）Python 算子的实战规则：脚本怎么写、参数表怎么填、出参怎么传、数据视图与对象存储怎么取数。
 
 **不要凭记忆作答。** 先判断任务类型，再用文件读取工具读对应的 reference 文件（路径相对本文件所在目录）。
 
 | 任务 | 读这个文件 |
 |---|---|
-| 写 / 审查算子脚本：符号写法、脚本模板、入参读取、接上游出参、出参、SQL 算子、导出文件、常用片段、路径与存储、踩坑清单 | `references/operator-script.md` |
+| 写 / 审查算子脚本：符号写法、脚本模板、入参读取、全局参数与 `prepareParamsMap`、接上游出参、出参、SQL 算子、对象存储（MinIO）取数、导出文件、常用片段、路径与存储、踩坑清单 | `references/operator-script.md` |
 | 填【入参/出参】表、类型下拉、value 留空、报错排查、最终交付物（仓库名 / 描述 / commit comment） | `references/params-and-delivery.md` |
 | 从平台「数据视图」取数：取数接口、`@where` / 查询参数 / where 配置三处参数、内网地址边界、取数排错 | `references/data-view.md` |
-| 集群侧环境事实（解释器、pip、目录、权限、超时、平台版本） | 先看 `references/environment.md`；没有就以 `references/environment.example.md` 的 16 个方面去问用户或实测，**不要编造** |
+| 集群侧环境事实（解释器、pip、目录、权限、超时、平台版本） | 先看 `references/environment.md`；没有就以 `references/environment.example.md` 的 17 个方面去问用户或实测，**不要编造** |
 
 ## 速查
 
@@ -28,11 +28,13 @@ user-invocable: true
 | 工作目录 | 每次执行后**被清空**，不能跨算子传文件 |
 | 大数据中间结果 | 写 `/data/`（约 128 GB 可用） |
 | 跨算子传数据 | 走**出参**；或写 `/dev/`、`/warehouse/`（对象存储） |
-| 入参 | 脚本里写 `${参数名}`，界面里加同名 IN 参数 |
+| 入参 | 脚本里写 `${参数名}`；要不要在界面声明，看它从哪来（见 operator-script.md） |
+| 全局参数 | 项目级配好后**节点上不用声明**，脚本直接 `${名字}`；声明同名空入参会把全局值盖空 |
+| 参数表在哪看 | 任务日志 `End initialize task` 之后的 `prepareParamsMap`：每个参数的 `direct` / `type` / `value` |
 | 接上游出参 | `RAW = r"""${参数名}"""`，**别用** `"..."` |
 | 参数嵌套 | 入参里填上游出参的**名字**，脚本写 `r"""${${名字}}"""`（源码读法，待实测） |
 | `system.*` | 脚本里 `${system.xxx}` **不会被替换**，别指望 |
-| 出参 | `print("${setValue(key=value)}")`，key 须先在界面声明为 OUT |
+| 出参 | `print("${setValue(key=value)}")`，key 须先在界面声明为 OUT；名字逐字匹配 |
 | SQL 出参 | 出参名必须**等于查询结果的列名（或别名）** |
 | 脚本字符 | **不要出现 `>` `<` `&`**（粘贴链路会转成 HTML 实体，见 operator-script.md） |
 | 失败 | `sys.exit(非0)` |
@@ -41,6 +43,7 @@ user-invocable: true
 | 数据视图取数 | `POST 平台/api/.DataView/view/v1/sql/resultAppend`，body `{pageNumber, pageSize, queryParamList, viewId}`，**不需要鉴权头** |
 | 内网地址 | 本 skill 里的 IP 与主机名**全是内网**（如 `23.36.2.60`），互联网环境访问不到，**不要主动请求** |
 | 视图参数 | 注册页配 `年份` / `月份`（必填 + 默认值），where 配置三条；空值会报 PG 整数转型错 |
+| 对象存储取数 | MinIO 走 S3 API `http://MINIO_HOST:9000`（`:9001` 是控制台网页）；对象键 `quote(key, safe="/")`；桶开匿名读就不用密钥 |
 
 ## 硬约束（交付前逐条过）
 
@@ -54,6 +57,7 @@ user-invocable: true
 8. pip 依赖钉死版本；超时/失败语义写进脚本头注释。
 9. 交付脚本必须先存在于磁盘，再贴进对话——只贴对话、没落盘的代码扫不到。
 10. 环境事实（解释器、目录、权限、超时）没实测就标 `[推断]`/`[未决]`，不要编。
+11. 用全局参数就**别在节点上声明同名入参**（本地空值会把全局值盖成空）；参数值不对先看日志 `prepareParamsMap`，再猜别的。
 
 ## 交付前自检（本机有 Python 时）
 
